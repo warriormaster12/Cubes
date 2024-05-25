@@ -13,3 +13,5 @@ target_include_directories(cubes PUBLIC src/)
 add_subdirectory(cu-engine EXCLUDE_FROM_ALL)
 
 target_link_libraries(cubes PRIVATE cu-engine)
+
+file(COPY ${PROJECT_SOURCE_DIR}/assets DESTINATION ${PROJECT_BINARY_DIR})

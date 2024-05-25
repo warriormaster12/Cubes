@@ -20,5 +20,14 @@ target_include_directories(cu-engine
 add_subdirectory(libs/glfw EXCLUDE_FROM_ALL)
 add_subdirectory(libs/vk-bootstrap EXCLUDE_FROM_ALL)
 add_subdirectory(libs/fmt EXCLUDE_FROM_ALL)
+add_subdirectory(libs/glslang EXCLUDE_FROM_ALL)
 
-target_link_libraries(cu-engine PRIVATE glfw vk-bootstrap fmt)
+target_link_libraries(
+    cu-engine PRIVATE 
+    glfw 
+    vk-bootstrap 
+    fmt 
+    glslang
+    SPIRV 
+    glslang-default-resource-limits
+)

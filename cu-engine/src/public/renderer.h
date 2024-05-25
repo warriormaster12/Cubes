@@ -1,5 +1,7 @@
 #pragma once
 
+#include "shader_compiler.h"
+
 class CuWindow;
 
 class CuRenderer {
@@ -9,4 +11,5 @@ public:
     void clear();
 private:
     CuWindow *window = nullptr;
+    ShaderCompiler shader_compiler;
 };
