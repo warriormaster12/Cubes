@@ -7,6 +7,7 @@
 #include <vk_mem_alloc.h>
 #include <vector>
 #include "utils.h"
+#include <shader_compiler.h>
 
 class CuWindow;
 
@@ -42,10 +43,14 @@ private:
     CuWindow *window = nullptr;
 };
 
+struct RenderPipeline {
+    VkPipeline pipeline = VK_NULL_HANDLE;
+};
 
 class CuRenderDevice {
 public:
     bool init(CuWindow *p_window);
+    RenderPipeline create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos);
     void draw();
     void clear();
 private:

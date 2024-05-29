@@ -9,7 +9,7 @@ public:
     void clear();
 
     CuWindow window;
-    CuRenderer renderer;
 private:
     bool ready = false;
+    CuRenderer renderer;
 };

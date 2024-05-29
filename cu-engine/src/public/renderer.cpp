@@ -5,6 +5,19 @@
 
 CuRenderDevice device;
 
+CuRenderer *CuRenderer::singleton = nullptr;
+
+CuRenderer::CuRenderer() {
+    singleton = this;
+}
+
+CuRenderer::~CuRenderer() {
+    singleton = nullptr;
+}
+
+CuRenderer *CuRenderer::get_singleton() {
+    return singleton;
+}
 
 bool CuRenderer::init(CuWindow *p_window) {
     bool result = false;

@@ -251,6 +251,26 @@ bool CuRenderDevice::init(CuWindow *p_window) {
     return true;
 }
 
+RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos) {
+    std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
+    shader_modules.reserve(p_shader_infos.size());
+    for (int i = 0; i < p_shader_infos.size(); ++i) {
+        const CompiledShaderInfo shader_info = p_shader_infos[i];
+        VkShaderModuleCreateInfo module_info = {};
+        module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        module_info.codeSize = shader_info.code_size;
+        module_info.pCode = shader_info.code;
+        VkShaderModule module;
+        VK_CHECK(vkCreateShaderModule(device, &module_info, nullptr, &module));
+        if (shader_modules.find(VK_SHADER_STAGE_VERTEX_BIT) != nullptr) {
+            ENGINE_WARN("This shader stage already exists");
+            continue;
+        }
+
+        shader_modules[VK_SHADER_STAGE_VERTEX_BIT] = module;
+    }
+}
+
 void CuRenderDevice::draw() {
     if (window->resize) {
         vkDeviceWaitIdle(device);
