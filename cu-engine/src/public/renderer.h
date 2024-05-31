@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shader_compiler.h"
+#include <vector>
 
 class CuWindow;
 
@@ -9,6 +10,7 @@ public:
     CuRenderer();
     ~CuRenderer();
     bool init(CuWindow *p_window);
+    void create_material(const std::vector<std::string>& p_shaders);
     void draw();
     void clear();
     

@@ -6,9 +6,7 @@ int main() {
     CuEngine engine;
     ShaderCompiler *s_compiler = ShaderCompiler::get_singleton();
     CompiledShaderInfo out_info = {};
-    if (s_compiler->compile_shader("assets/shaders/test.vert", &out_info)) {
-        
-    }
+    CuRenderer::get_singleton()->create_material({"assets/shaders/test.vert"});
     while (engine.running()) {
         engine.window.poll_events();
         CuRenderer::get_singleton()->draw();

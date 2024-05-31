@@ -1,8 +1,7 @@
 #pragma once
-
-#include <cstddef>
 #include <stdint.h>
 #include <string>
+#include <vector>
 
 enum ShaderStage {
     VERTEX,
@@ -10,8 +9,7 @@ enum ShaderStage {
 };
 
 struct CompiledShaderInfo {
-    size_t code_size;
-    const uint32_t *code;
+    std::vector<uint32_t> buffer;
     ShaderStage stage;
 };
 

@@ -251,15 +251,17 @@ bool CuRenderDevice::init(CuWindow *p_window) {
     return true;
 }
 
-RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos) {
+void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos) {
     std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
     shader_modules.reserve(p_shader_infos.size());
     for (int i = 0; i < p_shader_infos.size(); ++i) {
         const CompiledShaderInfo shader_info = p_shader_infos[i];
         VkShaderModuleCreateInfo module_info = {};
         module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        module_info.codeSize = shader_info.code_size;
-        module_info.pCode = shader_info.code;
+        module_info.pNext = nullptr;
+        module_info.flags = 0;
+        module_info.codeSize = shader_info.buffer.size() * sizeof(uint32_t);
+        module_info.pCode = shader_info.buffer.data();
         VkShaderModule module;
         VK_CHECK(vkCreateShaderModule(device, &module_info, nullptr, &module));
         if (shader_modules.find(VK_SHADER_STAGE_VERTEX_BIT) != nullptr) {
@@ -269,6 +271,17 @@ RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<Compiled
 
         shader_modules[VK_SHADER_STAGE_VERTEX_BIT] = module;
     }
+
+    VkPipelineLayoutCreateInfo layout_info = {};
+    layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.flags = 0;
+    layout_info.pPushConstantRanges = nullptr;
+    layout_info.pushConstantRangeCount = 0;
+    layout_info.pSetLayouts = nullptr;
+    layout_info.setLayoutCount = 0;
+
+    VkPipelineLayout layout;
+    VK_CHECK(vkCreatePipelineLayout(device, &layout_info, nullptr, &layout));
 }
 
 void CuRenderDevice::draw() {

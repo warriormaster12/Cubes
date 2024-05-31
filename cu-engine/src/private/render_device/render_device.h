@@ -44,13 +44,14 @@ private:
 };
 
 struct RenderPipeline {
+    VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
 
 class CuRenderDevice {
 public:
     bool init(CuWindow *p_window);
-    RenderPipeline create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos);
+    void create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos);
     void draw();
     void clear();
 private:

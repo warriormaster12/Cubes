@@ -28,6 +28,16 @@ bool CuRenderer::init(CuWindow *p_window) {
     return result;
 }
 
+void CuRenderer::create_material(const std::vector<std::string>& p_shaders) {
+    std::vector<CompiledShaderInfo> shader_infos(p_shaders.size());
+    for (int i = 0; i < shader_infos.size(); ++i) {
+        if (!shader_compiler.compile_shader(p_shaders[i], &shader_infos[i])) {
+            return;
+        }
+    } 
+    device.create_render_pipeline(shader_infos);
+}
+
 void CuRenderer::draw() {
     device.draw();
 }

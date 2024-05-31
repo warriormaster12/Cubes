@@ -78,7 +78,7 @@ bool compile_spirv(const std::string& p_filepath, const std::string& p_out_path,
 	}
 	const char* preprocess_cstr = preprocess_glsl.c_str();
 	shader.setStrings(&preprocess_cstr, 1);
-	if (!shader.parse(resources, 100, false, messages))
+	if (!shader.parse(resources, default_version, false, messages))
 	{
 		ENGINE_ERROR("GLSL Parsing Failed for: {}",p_filepath);
 		ENGINE_ERROR("",shader.getInfoLog());
@@ -104,7 +104,7 @@ bool compile_spirv(const std::string& p_filepath, const std::string& p_out_path,
 
 
 bool ShaderCompiler::compile_shader(const std::string& p_filepath, CompiledShaderInfo *out_info) {
-	const std::string out_path = "spv_" + std::filesystem::path(p_filepath).filename().string();
+	const std::string out_path = std::filesystem::path(get_file_path(p_filepath)) / std::filesystem::path("spv_" + std::filesystem::path(p_filepath).filename().string());
 	const bool in_file_exists = std::filesystem::exists(std::filesystem::path(p_filepath));
 	const bool out_file_exists = std::filesystem::exists(std::filesystem::path(out_path));
 	if (out_file_exists && in_file_exists) {
@@ -116,27 +116,30 @@ bool ShaderCompiler::compile_shader(const std::string& p_filepath, CompiledShade
 			std::vector<unsigned int> spirv;
 			if (compile_spirv(p_filepath, out_path, spirv)) {
 				if (out_info) {
-					out_info->code = spirv.data();
-					out_info->code_size = spirv.size() * sizeof(uint32_t);
+					out_info->buffer = spirv;
+					out_info->stage = VERTEX;
 				}
 			}
-		}
-	} else if (out_file_exists) {
-		std::ifstream out_file(out_path, std::ios::ate | std::ios::binary);
-		size_t file_size = (size_t) out_file.tellg();
-		std::vector<char> code(file_size);
-		out_file.seekg(0);
-		out_file.read(code.data(), code.size());
-		out_file.close();
+		} else {
+			std::ifstream out_file(out_path, std::ios::ate | std::ios::binary);
+			if (!out_file.is_open()) {
+				return false;
+			}
+			size_t file_size = (size_t)out_file.tellg();
+			std::vector<uint32_t> buffer(file_size / sizeof(u_int32_t));
+			out_file.seekg(0);
+			out_file.read((char*)buffer.data(), file_size);
+			out_file.close();
 
-		out_info->code = reinterpret_cast<const uint32_t*>(code.data());
-		out_info->code_size = code.size();
-	} else if (in_file_exists) {
+			out_info->buffer = buffer;
+			out_info->stage = VERTEX;
+		}
+	} else if (in_file_exists && !out_file_exists) {
 		std::vector<unsigned int> spirv;
 		if (compile_spirv(p_filepath, out_path, spirv)) {
 			if (out_info) {
-				out_info->code = spirv.data();
-				out_info->code_size = spirv.size() * sizeof(uint32_t);
+				out_info->buffer = spirv;
+				out_info->stage = VERTEX;
 			}
 		}
 	} else {
