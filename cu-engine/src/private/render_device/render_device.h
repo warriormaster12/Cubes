@@ -46,6 +46,15 @@ private:
 struct RenderPipeline {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    void clear(VkDevice& device) {
+        if (pipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, pipeline, nullptr);
+        }
+
+        if (layout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, layout, nullptr);
+        }
+    }
 };
 
 class CuRenderDevice {
@@ -71,6 +80,9 @@ private:
     Texture draw_texture;
 
     ExecutionQueuer main_deletion_queue = ExecutionQueuer(true);
+
+    //Refactor this into a hash map later
+    RenderPipeline render_pipeline;
 
     int current_frame_idx = 0;
     int frame_count = 0;
