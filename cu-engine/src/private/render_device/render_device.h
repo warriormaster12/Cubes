@@ -7,7 +7,7 @@
 #include <vk_mem_alloc.h>
 #include <vector>
 #include "utils.h"
-#include <shader_compiler.h>
+#include "shader_compiler.h"
 
 class CuWindow;
 

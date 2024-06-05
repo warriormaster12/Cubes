@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-file(GLOB_RECURSE SRC ${PROJECT_SOURCE_DIR} src/*.cpp libs/volk/volk.c libs/vma/vk_mem_alloc.cpp)
+file(GLOB_RECURSE SRC ${PROJECT_SOURCE_DIR} src/*.cpp libs/volk/volk.c libs/vma/vk_mem_alloc.cpp libs/spirv_reflect/spirv_reflect.c)
 
 add_library(cu-engine ${SRC})
 
@@ -15,6 +15,7 @@ target_include_directories(cu-engine
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/vulkan-headers
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/vma
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/volk
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/spirv_reflect
 )
 
 add_subdirectory(libs/glfw EXCLUDE_FROM_ALL)

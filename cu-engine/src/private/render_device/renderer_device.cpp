@@ -5,6 +5,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <spirv_reflect.h>
+
 
 
 void Swapchain::build(VkPresentModeKHR p_present_mode /*= VK_PRESENT_MODE_FIFO_KHR*/) {
@@ -266,10 +268,98 @@ bool get_shader_stage(const CompiledShaderInfo p_shader_info, VkShaderStageFlagB
     return true;
 }
 
+struct BindingHash {
+    size_t operator()(const VkDescriptorSetLayoutBinding& binding) const {
+        size_t hash = std::hash<uint32_t>{}(binding.binding) ^ 
+                      std::hash<uint32_t>{}(binding.descriptorType) ^ 
+                      std::hash<uint32_t>{}(binding.descriptorCount);
+        return hash;
+    }
+};
+
+// Equality function for VkDescriptorSetLayoutBinding
+struct BindingEqual {
+    bool operator()(const VkDescriptorSetLayoutBinding& lhs, const VkDescriptorSetLayoutBinding& rhs) const {
+        return lhs.binding == rhs.binding &&
+               lhs.descriptorType == rhs.descriptorType &&
+               lhs.descriptorCount == rhs.descriptorCount;
+    }
+};
+
+
+std::vector<VkDescriptorSetLayout> generate_descriptor_layouts(VkDevice device, std::vector<SpvReflectShaderModule> p_modules) {
+    std::vector<VkDescriptorSetLayout> out = {};
+    std::unordered_map<size_t, std::vector<VkDescriptorSetLayoutBinding>> unique_bindings;
+    std::unordered_map<size_t, VkDescriptorSetLayoutCreateInfo> unique_layouts;
+
+    for (int i = 0; i < p_modules.size(); ++i) {
+        SpvReflectShaderModule& module = p_modules[i];
+        
+        uint32_t count = 0;
+        SpvReflectResult result = spvReflectEnumerateDescriptorSets(&module, &count, NULL);
+        assert(result == SPV_REFLECT_RESULT_SUCCESS);
+        
+        std::vector<SpvReflectDescriptorSet*> sets(count);
+        result = spvReflectEnumerateDescriptorSets(&module, &count, sets.data());
+        assert(result == SPV_REFLECT_RESULT_SUCCESS);
+        
+        for (int set_i = 0; set_i < sets.size(); ++set_i) {
+            const SpvReflectDescriptorSet& refl_set = *(sets[set_i]);
+            std::vector<VkDescriptorSetLayoutBinding> bindings(refl_set.binding_count);
+            for (int binding_i = 0; binding_i < refl_set.binding_count; ++binding_i) {
+                const SpvReflectDescriptorBinding& refl_binding = *(refl_set.bindings[binding_i]);
+                VkDescriptorSetLayoutBinding layout_binding = {};
+                layout_binding.binding = refl_binding.binding;
+                layout_binding.descriptorType = static_cast<VkDescriptorType>(refl_binding.descriptor_type);
+                layout_binding.descriptorCount = 1;
+                layout_binding.stageFlags = static_cast<VkShaderStageFlagBits>(module.shader_stage);
+                for (int dim_i = 0; dim_i < refl_binding.array.dims_count; ++dim_i) {
+                    layout_binding.descriptorCount *= refl_binding.array.dims[dim_i];
+                }
+                bindings[binding_i] = layout_binding;
+            }
+
+            // Create a hash for the bindings
+            size_t hash = 0;
+            for (const auto& binding : bindings) {
+                hash ^= BindingHash{}(binding);
+            }
+
+            // Merge stages if the layout already exists
+            if (unique_bindings.find(hash) != unique_bindings.end()) {
+                for (int j = 0; j < bindings.size(); ++j) {
+                    unique_bindings[hash][j].stageFlags |= bindings[j].stageFlags;
+                }
+            } else {
+                // Store unique bindings
+                unique_bindings[hash] = bindings;
+            }
+        }
+    }
+
+    // Create Vulkan descriptor set layouts from the unique layout infos
+    for (const auto& entry : unique_bindings) {
+        VkDescriptorSetLayoutCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        info.bindingCount = entry.second.size();
+        info.pBindings = entry.second.data();
+
+        VkDescriptorSetLayout layout;
+        VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &layout));
+        out.push_back(layout);
+    }
+
+    return out;
+}
+
 void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos) {
     std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
-    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+    std::vector<SpvReflectShaderModule> spv_reflect_modules = {};
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {};
+    
     shader_stages.resize(p_shader_infos.size());
+    spv_reflect_modules.resize(p_shader_infos.size());
+
     for (int i = 0; i < p_shader_infos.size(); ++i) {
         const CompiledShaderInfo shader_info = p_shader_infos[i];
         VkShaderModuleCreateInfo module_info = {};
@@ -295,15 +385,21 @@ void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo
         stage_info.pName = "main";
         shader_modules[shader_stage] = module;
         shader_stages[i] = stage_info;
+
+        if (spvReflectCreateShaderModule(shader_info.buffer.size() * sizeof(uint32_t), shader_info.buffer.data(), &spv_reflect_modules[i]) != SPV_REFLECT_RESULT_SUCCESS) {
+            ENGINE_ERROR("Failed to create reflect module for");
+        }
     }
+
+    const std::vector<VkDescriptorSetLayout> descriptor_layouts = generate_descriptor_layouts(device, spv_reflect_modules);
 
     VkPipelineLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.flags = 0;
     layout_info.pPushConstantRanges = nullptr;
     layout_info.pushConstantRangeCount = 0;
-    layout_info.pSetLayouts = nullptr;
-    layout_info.setLayoutCount = 0;
+    layout_info.pSetLayouts = descriptor_layouts.data();
+    layout_info.setLayoutCount = descriptor_layouts.size();
 
     VkPipelineLayout layout;
     VK_CHECK(vkCreatePipelineLayout(device, &layout_info, nullptr, &layout));

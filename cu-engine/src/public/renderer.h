@@ -2,6 +2,7 @@
 
 #include "shader_compiler.h"
 #include <vector>
+#include <string>
 
 class CuWindow;
 
