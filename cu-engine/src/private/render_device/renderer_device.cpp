@@ -54,7 +54,7 @@ bool CuRenderDevice::init(CuWindow *p_window) {
     vkb::InstanceBuilder builder;
     vkb::Result<vkb::Instance> inst_ret = builder.set_app_name ("Vulkan app")
                         .request_validation_layers()
-                        .require_api_version(1,3)
+                        .require_api_version(1,2)
                         .use_default_debug_messenger()
                         .build();
     if (!inst_ret) {
@@ -76,10 +76,16 @@ bool CuRenderDevice::init(CuWindow *p_window) {
     main_deletion_queue.push_function([&](){
         vkDestroySurfaceKHR(instance, surface, VK_NULL_HANDLE);
     });
-    VkPhysicalDeviceVulkan13Features feats_13 = {};
-    feats_13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-    feats_13.dynamicRendering = true;
-    feats_13.synchronization2 = true;
+
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering_extension = {};
+    dynamic_rendering_extension.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
+	dynamic_rendering_extension.dynamicRendering = VK_TRUE;
+
+    VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2_extension = {};
+    synchronization2_extension.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
+    synchronization2_extension.pNext = nullptr;
+    synchronization2_extension.synchronization2 = VK_TRUE;
+
 
     VkPhysicalDeviceVulkan12Features feats_12 = {};
     feats_12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -87,9 +93,13 @@ bool CuRenderDevice::init(CuWindow *p_window) {
 	feats_12.descriptorIndexing = true;
     vkb::PhysicalDeviceSelector selector{ inst_ret.value() };
     vkb::Result<vkb::PhysicalDevice> phys_ret = selector.set_surface(surface)
-                        .set_minimum_version(1, 3) // require a vulkan 1.3 capable device
-                        .set_required_features_13(feats_13)
+                        .set_minimum_version(1, 2) // require a vulkan 1.3 capable device
                         .set_required_features_12(feats_12)
+                        .add_required_extensions({
+                            VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+                            VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+                            VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME
+                        })
                         .prefer_gpu_device_type()
                         .select();
     if (!phys_ret) {
@@ -103,7 +113,9 @@ bool CuRenderDevice::init(CuWindow *p_window) {
     ENGINE_INFO("Selected GPU: {}", device_properties.deviceName);
     vkb::DeviceBuilder device_builder{ phys_ret.value () };
     // automatically propagate needed data from instance & physical device
-    vkb::Result<vkb::Device> dev_ret = device_builder.build ();
+    vkb::Result<vkb::Device> dev_ret = device_builder
+        .add_pNext(&dynamic_rendering_extension)
+        .add_pNext(&synchronization2_extension).build ();
     if (!dev_ret) {
         ENGINE_ERROR("Failed to create Vulkan device. Error: {}", dev_ret.error().message());
         return false;
@@ -374,7 +386,7 @@ void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo
         if (!get_shader_stage(shader_info, shader_stage)) {
             continue;
         }
-        if (shader_modules.find(shader_stage) != nullptr) {
+        if (shader_modules.find(shader_stage) != shader_modules.end()) {
             ENGINE_WARN("This shader stage already exists");
             continue;
         }
@@ -556,7 +568,7 @@ void CuRenderDevice::draw() {
     rendering_info.pStencilAttachment = nullptr;
     rendering_info.layerCount = 1;
 
-    vkCmdBeginRendering(cmb, &rendering_info);
+    vkCmdBeginRenderingKHR(cmb, &rendering_info);
 
     vkCmdBindPipeline(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipeline.pipeline);
     //set dynamic viewport and scissor
@@ -581,7 +593,7 @@ void CuRenderDevice::draw() {
 	//launch a draw command to draw 3 vertices
 	vkCmdDraw(cmb, 3, 1, 0, 0);
 
-    vkCmdEndRendering(cmb);
+    vkCmdEndRenderingKHR(cmb);
 
     transition_image(cmb, draw_texture.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 	transition_image(cmb, swapchain.images[swapchain_img_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -611,12 +623,12 @@ void CuRenderDevice::draw() {
     signal_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     signal_info.pNext = nullptr;
     signal_info.semaphore = current_frame.render_semaphore;
-    signal_info.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
+    signal_info.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR;
     signal_info.deviceIndex = 0;
     signal_info.value = 1;
 
-    VkSubmitInfo2 submit_info = {};
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    VkSubmitInfo2KHR submit_info = {};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR;
     submit_info.pNext = nullptr;
     submit_info.waitSemaphoreInfoCount = 1;
     submit_info.pWaitSemaphoreInfos = &wait_info;
@@ -625,7 +637,7 @@ void CuRenderDevice::draw() {
     submit_info.commandBufferInfoCount = 1;
     submit_info.pCommandBufferInfos = &cmb_submit_info;
 
-    VK_CHECK(vkQueueSubmit2(graphics_queue, 1, &submit_info, current_frame.render_fence));
+    VK_CHECK(vkQueueSubmit2KHR(graphics_queue, 1, &submit_info, current_frame.render_fence));
 
     VkPresentInfoKHR present_info = {};
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;

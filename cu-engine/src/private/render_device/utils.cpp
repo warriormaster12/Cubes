@@ -30,11 +30,11 @@ void transition_image(VkCommandBuffer command_buffer, VkImage image, VkImageLayo
     dep_info.imageMemoryBarrierCount = 1;
     dep_info.pImageMemoryBarriers = &image_barrier;
 
-    vkCmdPipelineBarrier2(command_buffer, &dep_info);
+    vkCmdPipelineBarrier2KHR(command_buffer, &dep_info);
 }
 
 void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage destination, VkExtent2D src_size, VkExtent2D dst_size) {
-    VkImageBlit2 blit_region{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = nullptr };
+    VkImageBlit2KHR blit_region{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2_KHR, .pNext = nullptr };
 
 	blit_region.srcOffsets[1].x = src_size.width;
 	blit_region.srcOffsets[1].y = src_size.height;
@@ -54,7 +54,7 @@ void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage
 	blit_region.dstSubresource.layerCount = 1;
 	blit_region.dstSubresource.mipLevel = 0;
 
-	VkBlitImageInfo2 blitInfo{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2, .pNext = nullptr };
+	VkBlitImageInfo2KHR blitInfo{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2_KHR, .pNext = nullptr };
 	blitInfo.dstImage = destination;
 	blitInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	blitInfo.srcImage = source;
@@ -63,7 +63,7 @@ void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage
 	blitInfo.regionCount = 1;
 	blitInfo.pRegions = &blit_region;
 
-	vkCmdBlitImage2(command_buffer, &blitInfo);
+	vkCmdBlitImage2KHR(command_buffer, &blitInfo);
 }
 
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspect_mask) {
