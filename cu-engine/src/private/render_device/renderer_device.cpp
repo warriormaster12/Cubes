@@ -5,8 +5,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include <spirv_reflect.h>
-
 
 
 void Swapchain::build(VkPresentModeKHR p_present_mode /*= VK_PRESENT_MODE_FIFO_KHR*/) {
@@ -40,7 +38,7 @@ void Swapchain::clear() {
     }
 }
 
-bool CuRenderDevice::init(CuWindow *p_window) {
+bool CuRenderDevice::init(CuWindow* p_window) {
     if (!p_window) {
         ENGINE_ERROR("GLFWwindow must be provided");
         return false;
@@ -254,7 +252,17 @@ bool CuRenderDevice::init(CuWindow *p_window) {
 
         VK_CHECK(vkCreateFence(device, &render_fence_info, nullptr, &current_frame.render_fence));
 
+        std::vector<DescriptorAllocator::PoolSizeRatio> frame_sizes = { 
+			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 },
+		};
+
+        current_frame.descriptor_allocator.init(device, 1000, frame_sizes);
+
         current_frame.deletion_queue.push_function([&]() {
+            current_frame.descriptor_allocator.destroy_pools(device);
             vkDestroySemaphore(device, current_frame.swapchain_semaphore, nullptr);
             vkDestroySemaphore(device, current_frame.render_semaphore, nullptr);
             vkDestroyFence(device, current_frame.render_fence, nullptr);
@@ -263,6 +271,111 @@ bool CuRenderDevice::init(CuWindow *p_window) {
     }
 
     return true;
+}
+
+void DescriptorAllocator::init(VkDevice p_device, uint32_t p_max_sets, std::span<PoolSizeRatio> p_pool_ratios) {
+    ratios.clear();
+    
+    for (PoolSizeRatio r : p_pool_ratios) {
+        ratios.push_back(r);
+    }
+	
+    VkDescriptorPool new_pool = create_pool(p_device, p_max_sets, p_pool_ratios);
+
+    sets_per_pool = p_max_sets * 1.5; //grow it next allocation
+
+    ready_pools.push_back(new_pool);
+}
+
+void DescriptorAllocator::clear_pools(VkDevice p_device) { 
+    for (VkDescriptorPool p : ready_pools) {
+        vkResetDescriptorPool(p_device, p, 0);
+    }
+    for (VkDescriptorPool p : full_pools) {
+        vkResetDescriptorPool(p_device, p, 0);
+        ready_pools.push_back(p);
+    }
+    full_pools.clear();
+}
+
+void DescriptorAllocator::destroy_pools(VkDevice p_device) {
+	for (auto p : ready_pools) {
+		vkDestroyDescriptorPool(p_device, p, nullptr);
+	}
+    ready_pools.clear();
+	for (auto p : full_pools) {
+		vkDestroyDescriptorPool(p_device,p,nullptr);
+    }
+    full_pools.clear();
+}
+
+VkDescriptorPool DescriptorAllocator::get_pool(VkDevice p_device) {       
+    VkDescriptorPool new_pool;
+    if (ready_pools.size() != 0) {
+        new_pool = ready_pools.back();
+        ready_pools.pop_back();
+    }
+    else {
+	    //need to create a new pool
+	    new_pool = create_pool(p_device, sets_per_pool, ratios);
+
+	    sets_per_pool = sets_per_pool * 1.5;
+	    if (sets_per_pool > 4092) {
+		    sets_per_pool = 4092;
+	    }
+    }   
+
+    return new_pool;
+}
+
+VkDescriptorPool DescriptorAllocator::create_pool(VkDevice p_device, uint32_t p_set_count, std::span<PoolSizeRatio> p_pool_ratios) {
+	std::vector<VkDescriptorPoolSize> poolSizes;
+	for (PoolSizeRatio ratio : p_pool_ratios) {
+		poolSizes.push_back(VkDescriptorPoolSize{
+			.type = ratio.type,
+			.descriptorCount = uint32_t(ratio.ratio * p_set_count)
+		});
+	}
+
+	VkDescriptorPoolCreateInfo pool_info = {};
+	pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	pool_info.flags = 0;
+	pool_info.maxSets = p_set_count;
+	pool_info.poolSizeCount = (uint32_t)poolSizes.size();
+	pool_info.pPoolSizes = poolSizes.data();
+
+	VkDescriptorPool new_pool;
+	vkCreateDescriptorPool(p_device, &pool_info, nullptr, &new_pool);
+    return new_pool;
+}
+
+VkDescriptorSet DescriptorAllocator::allocate(VkDevice p_device, VkDescriptorSetLayout p_layout, uint32_t p_descriptor_set_count /*= 1*/, void* pNext/*= nullptr*/) {
+    //get or create a pool to allocate from
+    VkDescriptorPool pool_to_use = get_pool(p_device);
+
+	VkDescriptorSetAllocateInfo allocInfo = {};
+	allocInfo.pNext = pNext;
+	allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+	allocInfo.descriptorPool = pool_to_use;
+	allocInfo.descriptorSetCount = p_descriptor_set_count;
+	allocInfo.pSetLayouts = &p_layout;
+
+	VkDescriptorSet ds;
+	VkResult result = vkAllocateDescriptorSets(p_device, &allocInfo, &ds);
+
+    //allocation failed. Try again
+    if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+
+        full_pools.push_back(pool_to_use);
+    
+        pool_to_use = get_pool(p_device);
+        allocInfo.descriptorPool = pool_to_use;
+
+       VK_CHECK( vkAllocateDescriptorSets(p_device, &allocInfo, &ds));
+    }
+  
+    ready_pools.push_back(pool_to_use);
+    return ds;
 }
 
 bool get_shader_stage(const CompiledShaderInfo p_shader_info, VkShaderStageFlagBits& p_out_shader_stage) {
@@ -298,14 +411,34 @@ struct BindingEqual {
     }
 };
 
-
-std::vector<VkDescriptorSetLayout> generate_descriptor_layouts(VkDevice device, std::vector<SpvReflectShaderModule> p_modules) {
-    std::vector<VkDescriptorSetLayout> out = {};
+const PipelineLayoutInfo CuRenderDevice::generate_pipeline_info(const std::vector<CompiledShaderInfo>& p_shader_infos) {
+    std::vector<VkDescriptorSetLayout> descriptor_layouts = {};
     std::unordered_map<size_t, std::vector<VkDescriptorSetLayoutBinding>> unique_bindings;
     std::unordered_map<size_t, VkDescriptorSetLayoutCreateInfo> unique_layouts;
+    std::unordered_map<VkShaderStageFlagBits, SpvReflectShaderModule> reflect_modules = {};
 
-    for (int i = 0; i < p_modules.size(); ++i) {
-        SpvReflectShaderModule& module = p_modules[i];
+    for (int i = 0; i < p_shader_infos.size(); ++i) {
+        const CompiledShaderInfo shader_info = p_shader_infos[i];
+
+        VkShaderStageFlagBits shader_stage;
+        if (!get_shader_stage(shader_info, shader_stage)) {
+            continue;
+        }
+        if (reflect_modules.find(shader_stage) != reflect_modules.end()) {
+            ENGINE_WARN("This reflect shader stage already exists");
+            continue;
+        }
+        
+        SpvReflectShaderModule module;
+        if (spvReflectCreateShaderModule(shader_info.buffer.size() * sizeof(uint32_t), shader_info.buffer.data(), &module) != SPV_REFLECT_RESULT_SUCCESS) {
+            ENGINE_ERROR("Failed to create reflect module");
+        }
+
+        reflect_modules[shader_stage] = module;
+    }
+
+    for (std::pair<VkShaderStageFlagBits, SpvReflectShaderModule> entry : reflect_modules) {
+        SpvReflectShaderModule& module = entry.second;
         
         uint32_t count = 0;
         SpvReflectResult result = spvReflectEnumerateDescriptorSets(&module, &count, NULL);
@@ -349,6 +482,7 @@ std::vector<VkDescriptorSetLayout> generate_descriptor_layouts(VkDevice device, 
         }
     }
 
+    std::vector<VkDescriptorSet> descriptor_sets = {};
     // Create Vulkan descriptor set layouts from the unique layout infos
     for (const auto& entry : unique_bindings) {
         VkDescriptorSetLayoutCreateInfo info = {};
@@ -358,19 +492,28 @@ std::vector<VkDescriptorSetLayout> generate_descriptor_layouts(VkDevice device, 
 
         VkDescriptorSetLayout layout;
         VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &layout));
-        out.push_back(layout);
+
+        descriptor_layouts.push_back(layout);
+
+        for (int i = 0; i < FRAME_OVERLAP; ++i) {
+            FrameData& current_frame = frame_data[i];
+            VkDescriptorSet set = current_frame.descriptor_allocator.allocate(device, layout);
+            descriptor_sets.push_back(set);
+        }
     }
 
-    return out;
-}
+    PipelineLayoutInfo info = {};
+    info.descriptor_layouts = descriptor_layouts;
+    info.descriptor_sets = descriptor_sets;
+    
+    return info;
+};
 
-void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo> p_shader_infos) {
+void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info) {
     std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
-    std::vector<SpvReflectShaderModule> spv_reflect_modules = {};
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {};
     
     shader_stages.resize(p_shader_infos.size());
-    spv_reflect_modules.resize(p_shader_infos.size());
 
     for (int i = 0; i < p_shader_infos.size(); ++i) {
         const CompiledShaderInfo shader_info = p_shader_infos[i];
@@ -397,21 +540,15 @@ void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo
         stage_info.pName = "main";
         shader_modules[shader_stage] = module;
         shader_stages[i] = stage_info;
-
-        if (spvReflectCreateShaderModule(shader_info.buffer.size() * sizeof(uint32_t), shader_info.buffer.data(), &spv_reflect_modules[i]) != SPV_REFLECT_RESULT_SUCCESS) {
-            ENGINE_ERROR("Failed to create reflect module for");
-        }
     }
-
-    const std::vector<VkDescriptorSetLayout> descriptor_layouts = generate_descriptor_layouts(device, spv_reflect_modules);
 
     VkPipelineLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.flags = 0;
     layout_info.pPushConstantRanges = nullptr;
     layout_info.pushConstantRangeCount = 0;
-    layout_info.pSetLayouts = descriptor_layouts.data();
-    layout_info.setLayoutCount = descriptor_layouts.size();
+    layout_info.pSetLayouts = p_layout_info.descriptor_layouts.data();
+    layout_info.setLayoutCount = p_layout_info.descriptor_layouts.size();
 
     VkPipelineLayout layout;
     VK_CHECK(vkCreatePipelineLayout(device, &layout_info, nullptr, &layout));

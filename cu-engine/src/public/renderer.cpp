@@ -34,8 +34,9 @@ void CuRenderer::create_material(const std::vector<std::string>& p_shaders) {
         if (!shader_compiler.compile_shader(p_shaders[i], &shader_infos[i])) {
             return;
         }
-    } 
-    device.create_render_pipeline(shader_infos);
+    }
+    const PipelineLayoutInfo layout_info = device.generate_pipeline_info(shader_infos);
+    device.create_render_pipeline(shader_infos, layout_info);
 }
 
 void CuRenderer::draw() {
