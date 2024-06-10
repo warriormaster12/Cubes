@@ -6,6 +6,7 @@
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
 #include <vk_mem_alloc.h>
 #include <vector>
+#include <span>
 #include "utils.h"
 #include "shader_compiler.h"
 #include <spirv_reflect.h>
