@@ -3,7 +3,7 @@
 #include <shader_compiler.h>
 
 int main() {
-    CuEngine engine;
+    CuEngine engine = CuEngine("Cubes");
     ShaderCompiler *s_compiler = ShaderCompiler::get_singleton();
     CompiledShaderInfo out_info = {};
     CuRenderer::get_singleton()->create_material({"assets/shaders/test.vert", "assets/shaders/test.frag"});

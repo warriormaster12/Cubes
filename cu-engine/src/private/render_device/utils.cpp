@@ -33,16 +33,16 @@ void transition_image(VkCommandBuffer command_buffer, VkImage image, VkImageLayo
     vkCmdPipelineBarrier2KHR(command_buffer, &dep_info);
 }
 
-void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage destination, VkExtent2D src_size, VkExtent2D dst_size) {
+void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage destination, VkExtent3D src_size, VkExtent3D dst_size) {
     VkImageBlit2KHR blit_region{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2_KHR, .pNext = nullptr };
 
 	blit_region.srcOffsets[1].x = src_size.width;
 	blit_region.srcOffsets[1].y = src_size.height;
-	blit_region.srcOffsets[1].z = 1;
+	blit_region.srcOffsets[1].z = src_size.depth;
 
 	blit_region.dstOffsets[1].x = dst_size.width;
 	blit_region.dstOffsets[1].y = dst_size.height;
-	blit_region.dstOffsets[1].z = 1;
+	blit_region.dstOffsets[1].z = dst_size.depth;
 
 	blit_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	blit_region.srcSubresource.baseArrayLayer = 0;

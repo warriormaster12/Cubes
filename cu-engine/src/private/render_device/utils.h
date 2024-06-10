@@ -46,7 +46,7 @@ struct Texture {
 };
 
 void transition_image(VkCommandBuffer command_buffer, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout);
-void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage destination, VkExtent2D src_size, VkExtent2D dst_size);
+void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage destination, VkExtent3D src_size, VkExtent3D dst_size);
 
 
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspect_mask);

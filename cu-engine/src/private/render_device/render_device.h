@@ -38,6 +38,7 @@ private:
 struct RenderPipeline {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> sets = {};
     void clear(VkDevice& device) {
         if (pipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, pipeline, nullptr);
@@ -87,12 +88,27 @@ struct FrameData {
 };
 const int FRAME_OVERLAP = 2;
 
+enum ImageType {
+    COLOR,
+    DEPTH,
+    STENCIL,
+};
+
 class CuRenderDevice {
 public:
     bool init(CuWindow* p_window);
+    VkExtent2D get_swapchain_size() const {return swapchain.extent;}
+    bool create_texture(VkFormat p_format, VkExtent3D p_extent, VkImageUsageFlags p_image_usage, VmaMemoryUsage p_memory_usage, Texture& p_out_texture);
+    void clear_texture(Texture& p_texture);
     const PipelineLayoutInfo generate_pipeline_info(const std::vector<CompiledShaderInfo>& p_shader_infos);
-    void create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info);
+    RenderPipeline create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info, const Texture* p_texture = nullptr);
+    void begin_recording();
+    void prepare_image(Texture& p_texture, ImageType p_image_type);
+    void bind_pipeline(const RenderPipeline& p_pipeline);
     void draw();
+    void submit_image(Texture& p_from, Texture* p_to = nullptr);
+    void finish_recording();
+    void stop_rendering();
     void clear();
 private:
     VkInstance instance;
@@ -108,13 +124,10 @@ private:
     Swapchain swapchain;
     FrameData frame_data[FRAME_OVERLAP];
 
-    Texture draw_texture;
-
     ExecutionQueuer main_deletion_queue = ExecutionQueuer(true);
-
-    //Refactor this into a hash map later
-    RenderPipeline render_pipeline;
 
     int current_frame_idx = 0;
     int frame_count = 0;
+
+    uint32_t swapchain_img_index = 0;
 };

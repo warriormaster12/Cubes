@@ -1,6 +1,5 @@
 #include "render_device.h"
 #include <VkBootstrap.h>
-#include <cmath>
 #include "window.h"
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -186,39 +185,6 @@ bool CuRenderDevice::init(CuWindow* p_window) {
         swapchain.clear();
     });
 
-    {
-        draw_texture.extent = {
-            swapchain.extent.width,
-            swapchain.extent.height,
-            1
-        };
-
-        draw_texture.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        
-        VkImageUsageFlags draw_image_usage_flags = {};
-        draw_image_usage_flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        draw_image_usage_flags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        draw_image_usage_flags |= VK_IMAGE_USAGE_STORAGE_BIT;
-        draw_image_usage_flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-        VkImageCreateInfo draw_image_info = image_create_info(draw_texture.format, draw_image_usage_flags, draw_texture.extent);
-
-        VmaAllocationCreateInfo rimg_allocinfo = {};
-        rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        rimg_allocinfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-
-        vmaCreateImage(allocator, &draw_image_info, &rimg_allocinfo, &draw_texture.image, &draw_texture.allocation, nullptr);
-
-        VkImageViewCreateInfo rview_info = imageview_create_info(draw_texture.format, draw_texture.image, VK_IMAGE_ASPECT_COLOR_BIT);
-
-        VK_CHECK(vkCreateImageView(device, &rview_info, nullptr, &draw_texture.view));
-
-        main_deletion_queue.push_function([&](){
-            vkDestroyImageView(device, draw_texture.view, nullptr);
-		    vmaDestroyImage(allocator, draw_texture.image, draw_texture.allocation);
-        });
-    }
-
     VkCommandPoolCreateInfo command_pool_info = {};
     command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     command_pool_info.queueFamilyIndex = graphics_queue_family;
@@ -271,6 +237,29 @@ bool CuRenderDevice::init(CuWindow* p_window) {
     }
 
     return true;
+}
+
+bool CuRenderDevice::create_texture(VkFormat p_format, VkExtent3D p_extent, VkImageUsageFlags p_image_usage, VmaMemoryUsage p_memory_usage, Texture& p_out_texture) {
+    p_out_texture.format = p_format;
+    p_out_texture.extent = p_extent;
+    VkImageCreateInfo image_info = image_create_info(p_out_texture.format, p_image_usage, p_out_texture.extent);
+
+    VmaAllocationCreateInfo img_alloc_info = {};
+    img_alloc_info.usage = p_memory_usage;
+    img_alloc_info.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    VK_CHECK(vmaCreateImage(allocator, &image_info, &img_alloc_info, &p_out_texture.image, &p_out_texture.allocation, nullptr));
+
+    VkImageViewCreateInfo rview_info = imageview_create_info(p_out_texture.format, p_out_texture.image, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    VK_CHECK(vkCreateImageView(device, &rview_info, nullptr, &p_out_texture.view));
+
+    return true;
+}
+
+void CuRenderDevice::clear_texture(Texture& p_texture) {
+    vkDestroyImageView(device, p_texture.view, nullptr);
+    vmaDestroyImage(allocator, p_texture.image, p_texture.allocation);
 }
 
 void DescriptorAllocator::init(VkDevice p_device, uint32_t p_max_sets, std::span<PoolSizeRatio> p_pool_ratios) {
@@ -509,7 +498,7 @@ const PipelineLayoutInfo CuRenderDevice::generate_pipeline_info(const std::vecto
     return info;
 };
 
-void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info) {
+RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info, const Texture* p_texture /*= nullptr*/) {
     std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {};
     
@@ -573,7 +562,7 @@ void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo
     VkPipelineRenderingCreateInfoKHR rendering_info = {};
     rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
     rendering_info.colorAttachmentCount = 1;
-    rendering_info.pColorAttachmentFormats = &draw_texture.format;
+    rendering_info.pColorAttachmentFormats = &(p_texture ? p_texture->format : swapchain.format);
     rendering_info.viewMask = 0;
 
     VkPipelineViewportStateCreateInfo viewport_state_info = {};
@@ -635,13 +624,83 @@ void CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo
         vkDestroyShaderModule(device, element.second, nullptr);
     }
 
-    render_pipeline.layout = layout;
-    render_pipeline.pipeline = pipeline;
+    RenderPipeline out = {};
+    out.pipeline = pipeline;
+    out.layout = layout;
+    out.sets = p_layout_info.descriptor_sets;
 
-    main_deletion_queue.push_function([&](){render_pipeline.clear(device);});
+    main_deletion_queue.push_function([&](){out.clear(device);});
+    
+    return out;
 }
 
-void CuRenderDevice::draw() {
+void CuRenderDevice::prepare_image(Texture& p_texture, ImageType p_image_type) {
+    FrameData& current_frame = frame_data[current_frame_idx];
+    VkCommandBuffer cmb = current_frame.cmb;
+    transition_image(cmb, p_texture.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    VkImageAspectFlags aspect_flags = 0;
+    
+    switch (p_image_type) {
+        case COLOR:
+            aspect_flags = VK_IMAGE_ASPECT_COLOR_BIT;
+            break;
+        case DEPTH:
+            aspect_flags = VK_IMAGE_ASPECT_DEPTH_BIT;
+            break;
+        case STENCIL: 
+            aspect_flags = VK_IMAGE_ASPECT_STENCIL_BIT;
+            break;
+    }
+    VkImageSubresourceRange subresource_range = image_subresource_range(aspect_flags);
+
+    transition_image(cmb, p_texture.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    VkRenderingAttachmentInfo color_attachment_info {};
+    color_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    color_attachment_info.pNext = nullptr;
+
+    color_attachment_info.imageView = p_texture.view;
+    color_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    color_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+    VkRenderingInfo rendering_info = {};
+    rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    rendering_info.pNext = nullptr;
+    rendering_info.renderArea = VkRect2D{
+        VkOffset2D{0,0}, 
+        VkExtent2D {p_texture.extent.width, 
+        p_texture.extent.height}
+    };
+    rendering_info.pColorAttachments = &color_attachment_info;
+    rendering_info.colorAttachmentCount = 1;
+    rendering_info.pDepthAttachment = nullptr;
+    rendering_info.pStencilAttachment = nullptr;
+    rendering_info.layerCount = 1;
+
+    vkCmdBeginRenderingKHR(cmb, &rendering_info);
+
+     //set dynamic viewport and scissor
+	VkViewport viewport = {};
+	viewport.x = 0;
+	viewport.y = 0;
+	viewport.width = p_texture.extent.width;
+	viewport.height = p_texture.extent.height;
+	viewport.minDepth = 0.f;
+	viewport.maxDepth = 1.f;
+
+	vkCmdSetViewport(cmb, 0, 1, &viewport);
+
+	VkRect2D scissor = {};
+	scissor.offset.x = 0;
+	scissor.offset.y = 0;
+	scissor.extent.width = p_texture.extent.width;
+	scissor.extent.height = p_texture.extent.height;
+
+	vkCmdSetScissor(cmb, 0, 1, &scissor);
+}
+
+void CuRenderDevice::begin_recording() {
     if (window->resize) {
         vkDeviceWaitIdle(device);
 		swapchain.build();
@@ -649,7 +708,6 @@ void CuRenderDevice::draw() {
     FrameData& current_frame = frame_data[current_frame_idx];
     VK_CHECK(vkWaitForFences(device, 1, &current_frame.render_fence, true, 1000000000));
 
-    uint32_t swapchain_img_index;
     VkResult next_img_result = vkAcquireNextImageKHR(device, swapchain.swapchain, 1000000000, current_frame.swapchain_semaphore, nullptr, &swapchain_img_index);
 
     if(next_img_result == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -669,76 +727,56 @@ void CuRenderDevice::draw() {
     main_cmb_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
     VK_CHECK(vkBeginCommandBuffer(cmb, &main_cmb_begin_info));
+}
 
-    transition_image(cmb, draw_texture.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+void CuRenderDevice::bind_pipeline(const RenderPipeline& p_pipeline) {
+    VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
+    if (p_pipeline.pipeline == VK_NULL_HANDLE) {
+        ENGINE_WARN("Render pipeline not allocated. Fix it.");
+        return;
+    }
+    vkCmdBindPipeline(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, p_pipeline.pipeline);
+}
 
-    VkImageSubresourceRange clear_range = image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
+void CuRenderDevice::draw() {
+    VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
+    vkCmdDraw(cmb, 3, 1, 0, 0);
+}
 
-    VkClearColorValue clear_value;
-    float flash = std::abs(std::sin(frame_count / 120.f));
-	clear_value = { { 0.0f, 0.0f, flash, 1.0f } };
-    
-    vkCmdClearColorImage(cmb, draw_texture.image, VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
+void CuRenderDevice::submit_image(Texture& p_from, Texture* p_to /*= nullptr*/) {
+    FrameData& current_frame = frame_data[current_frame_idx];
 
-    transition_image(cmb, draw_texture.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    
-    VkRenderingAttachmentInfo color_attachment_info {};
-    color_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    color_attachment_info.pNext = nullptr;
-
-    color_attachment_info.imageView = draw_texture.view;
-    color_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    color_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    color_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-    VkRenderingInfo rendering_info = {};
-    rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    rendering_info.pNext = nullptr;
-    rendering_info.renderArea = VkRect2D{
-        VkOffset2D{0,0}, 
-        VkExtent2D {draw_texture.extent.width, 
-        draw_texture.extent.height}
-    };
-    rendering_info.pColorAttachments = &color_attachment_info;
-    rendering_info.colorAttachmentCount = 1;
-    rendering_info.pDepthAttachment = nullptr;
-    rendering_info.pStencilAttachment = nullptr;
-    rendering_info.layerCount = 1;
-
-    vkCmdBeginRenderingKHR(cmb, &rendering_info);
-
-    vkCmdBindPipeline(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipeline.pipeline);
-    //set dynamic viewport and scissor
-	VkViewport viewport = {};
-	viewport.x = 0;
-	viewport.y = 0;
-	viewport.width = draw_texture.extent.width;
-	viewport.height = draw_texture.extent.height;
-	viewport.minDepth = 0.f;
-	viewport.maxDepth = 1.f;
-
-	vkCmdSetViewport(cmb, 0, 1, &viewport);
-
-	VkRect2D scissor = {};
-	scissor.offset.x = 0;
-	scissor.offset.y = 0;
-	scissor.extent.width = draw_texture.extent.width;
-	scissor.extent.height = draw_texture.extent.height;
-
-	vkCmdSetScissor(cmb, 0, 1, &scissor);
-
-	//launch a draw command to draw 3 vertices
-	vkCmdDraw(cmb, 3, 1, 0, 0);
+    VkCommandBuffer cmb = current_frame.cmb;
 
     vkCmdEndRenderingKHR(cmb);
 
-    transition_image(cmb, draw_texture.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transition_image(cmb, p_from.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
 	transition_image(cmb, swapchain.images[swapchain_img_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
+    VkExtent3D destination_extent;
+    if (p_to) {
+        destination_extent = p_to->extent;
+    } else {
+        destination_extent = {swapchain.extent.width, swapchain.extent.height, 1};
+    }
 
-	copy_image_to_image(cmb, draw_texture.image, swapchain.images[swapchain_img_index], {draw_texture.extent.width, draw_texture.extent.height}, swapchain.extent);
+	copy_image_to_image(
+        cmb, 
+        p_from.image, 
+        p_to ? p_to->image : swapchain.images[swapchain_img_index], 
+        p_from.extent, 
+        destination_extent
+    );
 
     transition_image(cmb, swapchain.images[swapchain_img_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+}
+
+void CuRenderDevice::finish_recording() {
+
+    FrameData& current_frame = frame_data[current_frame_idx];
+
+    VkCommandBuffer cmb = current_frame.cmb;
     
     VK_CHECK(vkEndCommandBuffer(cmb));
 
@@ -798,8 +836,11 @@ void CuRenderDevice::draw() {
     frame_count++;
 }
 
-void CuRenderDevice::clear() {
+void CuRenderDevice::stop_rendering() {
     vkDeviceWaitIdle(device);
+}
+
+void CuRenderDevice::clear() {
     for (int i = 0; i < FRAME_OVERLAP; ++i) {
         FrameData& current_frame = frame_data[i];
         current_frame.deletion_queue.execute();

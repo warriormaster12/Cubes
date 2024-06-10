@@ -5,6 +5,7 @@
 class CuEngine {
 public:
     CuEngine();
+    CuEngine(const std::string& p_title);
     bool running() const;
     void clear();
 
