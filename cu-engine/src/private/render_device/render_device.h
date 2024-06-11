@@ -33,7 +33,7 @@ private:
     VkSurfaceKHR surface;
     VkDevice device; 
     VkPhysicalDevice physical_device;
-    CuWindow *window = nullptr;
+    CuWindow* window = nullptr;
 };
 
 struct RenderPipeline {
@@ -97,6 +97,7 @@ enum ImageType {
 
 class CuRenderDevice {
 public:
+    CuRenderDevice();
     bool init(CuWindow* p_window);
     VkExtent2D get_swapchain_size() const {return swapchain.extent;}
     bool create_texture(VkFormat p_format, VkExtent3D p_extent, VkImageUsageFlags p_image_usage, VmaMemoryUsage p_memory_usage, Texture& p_out_texture);
@@ -111,6 +112,8 @@ public:
     void finish_recording();
     void stop_rendering();
     void clear();
+
+    static CuRenderDevice* get_singleton();
 private:
     VkInstance instance;
     VkDebugUtilsMessengerEXT debug_messenger;
@@ -131,4 +134,6 @@ private:
     int frame_count = 0;
 
     uint32_t swapchain_img_index = 0;
+
+    static CuRenderDevice* singleton;
 };

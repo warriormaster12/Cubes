@@ -4,7 +4,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-
+CuRenderDevice *CuRenderDevice::singleton = nullptr;
 
 void Swapchain::build(VkPresentModeKHR p_present_mode /*= VK_PRESENT_MODE_FIFO_KHR*/) {
     clear();
@@ -35,6 +35,14 @@ void Swapchain::clear() {
     if (swapchain != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(device, swapchain, nullptr);
     }
+}
+
+CuRenderDevice::CuRenderDevice() {
+    singleton = this;
+}
+
+CuRenderDevice* CuRenderDevice::get_singleton() {
+    return singleton;
 }
 
 bool CuRenderDevice::init(CuWindow* p_window) {
