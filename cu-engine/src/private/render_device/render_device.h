@@ -36,6 +36,8 @@ private:
     CuWindow* window = nullptr;
 };
 
+
+
 struct RenderPipeline {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -101,6 +103,9 @@ public:
     bool init(CuWindow* p_window);
     VkExtent2D get_swapchain_size() const {return swapchain.extent;}
     bool create_texture(VkFormat p_format, VkExtent3D p_extent, VkImageUsageFlags p_image_usage, VmaMemoryUsage p_memory_usage, Texture& p_out_texture);
+    Buffer create_buffer(size_t p_size, VkBufferUsageFlags p_usage, VmaMemoryUsage p_memory_usage);
+    void write_buffer(void* p_data, size_t p_size, Buffer& buffer);
+    void clear_buffer(Buffer p_buffer);
     void clear_texture(Texture& p_texture);
     const PipelineLayoutInfo generate_pipeline_info(const std::vector<CompiledShaderInfo>& p_shader_infos);
     RenderPipeline create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info, const Texture* p_texture = nullptr);
@@ -112,6 +117,8 @@ public:
     void finish_recording();
     void stop_rendering();
     void clear();
+
+    VkDevice get_raw_device() {return device;}
 
     static CuRenderDevice* get_singleton();
 private:
@@ -136,4 +143,16 @@ private:
     uint32_t swapchain_img_index = 0;
 
     static CuRenderDevice* singleton;
+};
+
+struct DescriptorWriter {
+    std::deque<VkDescriptorImageInfo> image_infos;
+    std::deque<VkDescriptorBufferInfo> buffer_infos;
+    std::vector<VkWriteDescriptorSet> writes;
+
+    void write_image(int p_binding,VkImageView p_image,VkSampler p_sampler , VkImageLayout p_layout, VkDescriptorType p_type);
+    void write_buffer(int p_binding, Buffer& p_buffer, size_t p_offset, size_t p_stride,VkDescriptorType p_type); 
+
+    void clear();
+    void update_set(VkDescriptorSet p_set);
 };

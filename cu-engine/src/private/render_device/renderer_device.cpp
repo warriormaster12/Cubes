@@ -247,6 +247,34 @@ bool CuRenderDevice::init(CuWindow* p_window) {
     return true;
 }
 
+Buffer CuRenderDevice::create_buffer(size_t p_size, VkBufferUsageFlags p_usage, VmaMemoryUsage p_memory_usage) {
+    VkBufferCreateInfo buffer_info = {};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = p_size;
+    buffer_info.usage = p_usage;
+
+    VmaAllocationCreateInfo vma_alloc_info = {};
+    vma_alloc_info.usage = p_memory_usage;
+    vma_alloc_info.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    Buffer out_buffer;
+    
+    VK_CHECK(vmaCreateBuffer(allocator, &buffer_info, &vma_alloc_info, &out_buffer.buffer, &out_buffer.allocation, &out_buffer.info));
+
+    return out_buffer;
+}
+
+void CuRenderDevice::write_buffer(void* p_data, size_t p_size, Buffer& buffer) {
+    char* buffer_data;
+    vmaMapMemory(allocator, buffer.allocation, (void**)&buffer_data);
+    memcpy(buffer_data, p_data, p_size);
+    vmaUnmapMemory(allocator, buffer.allocation);
+}
+
+void CuRenderDevice::clear_buffer(Buffer p_buffer) {
+    vmaDestroyBuffer(allocator, p_buffer.buffer, p_buffer.allocation);
+}
+
 bool CuRenderDevice::create_texture(VkFormat p_format, VkExtent3D p_extent, VkImageUsageFlags p_image_usage, VmaMemoryUsage p_memory_usage, Texture& p_out_texture) {
     p_out_texture.format = p_format;
     p_out_texture.extent = p_extent;
@@ -495,7 +523,7 @@ const PipelineLayoutInfo CuRenderDevice::generate_pipeline_info(const std::vecto
         for (int i = 0; i < FRAME_OVERLAP; ++i) {
             FrameData& current_frame = frame_data[i];
             VkDescriptorSet set = current_frame.descriptor_allocator.allocate(device, layout);
-            descriptor_sets.push_back(set);
+            descriptor_sets.push_back(std::move(set));
         }
     }
 
@@ -744,6 +772,8 @@ void CuRenderDevice::bind_pipeline(const RenderPipeline& p_pipeline) {
         return;
     }
     vkCmdBindPipeline(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, p_pipeline.pipeline);
+    VkDescriptorSet set = p_pipeline.sets[0];
+    vkCmdBindDescriptorSets(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, p_pipeline.layout, 0, 1, &set, 0, 0);
 }
 
 void CuRenderDevice::draw() {
@@ -856,4 +886,42 @@ void CuRenderDevice::clear() {
     }
 
     main_deletion_queue.execute();
+}
+
+
+void DescriptorWriter::write_buffer(int p_binding, Buffer& p_buffer, size_t p_offset, size_t p_stride,VkDescriptorType p_type) {
+    VkDescriptorBufferInfo& info = buffer_infos.emplace_back(VkDescriptorBufferInfo{
+		.buffer = p_buffer.buffer,
+		.offset = p_offset,
+		.range = p_stride
+		});
+
+	VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+
+	write.dstBinding = p_binding;
+	write.dstSet = VK_NULL_HANDLE; //left empty for now until we need to write it
+	write.descriptorCount = 1;
+	write.descriptorType = p_type;
+	write.pBufferInfo = &info;
+
+	writes.push_back(write);
+}
+
+void DescriptorWriter::update_set(VkDescriptorSet p_set) {
+    CuRenderDevice* render_device = CuRenderDevice::get_singleton();
+    if (!render_device) {
+        ENGINE_ERROR("Failed to update set");
+        return;
+    }
+    for (VkWriteDescriptorSet& write : writes) {
+        write.dstSet = p_set;
+    }
+
+    vkUpdateDescriptorSets(render_device->get_raw_device(), (uint32_t)writes.size(), writes.data(), 0, nullptr);
+}
+
+void DescriptorWriter::clear() {
+    image_infos.clear();
+    writes.clear();
+    buffer_infos.clear();
 }

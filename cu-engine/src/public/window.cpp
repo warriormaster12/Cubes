@@ -10,7 +10,10 @@ static void framebuffer_resize_callback(GLFWwindow* window, int width, int heigh
 }
 
 bool CuWindow::init(const std::string p_title, int p_width, int p_height) {
-    glfwInit();
+    if (!glfwInit()) {
+        ENGINE_ERROR("Failed to init glfw");
+        return -1;
+    }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 

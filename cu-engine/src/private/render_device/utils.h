@@ -45,6 +45,12 @@ struct Texture {
     VkFormat format;
 };
 
+struct Buffer {
+    VkBuffer buffer;
+    VmaAllocation allocation;
+    VmaAllocationInfo info;
+};
+
 void transition_image(VkCommandBuffer command_buffer, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout);
 void copy_image_to_image(VkCommandBuffer command_buffer, VkImage source, VkImage destination, VkExtent3D src_size, VkExtent3D dst_size);
 
