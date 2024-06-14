@@ -772,8 +772,13 @@ void CuRenderDevice::bind_pipeline(const RenderPipeline& p_pipeline) {
         return;
     }
     vkCmdBindPipeline(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, p_pipeline.pipeline);
-    VkDescriptorSet set = p_pipeline.sets[0];
-    vkCmdBindDescriptorSets(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, p_pipeline.layout, 0, 1, &set, 0, 0);
+
+    int set_size = p_pipeline.sets.size() / FRAME_OVERLAP;
+    for (int i = 0; i < set_size; ++i) {
+        const int index = current_frame_idx + i;
+        VkDescriptorSet set = p_pipeline.sets[index];
+        vkCmdBindDescriptorSets(cmb, VK_PIPELINE_BIND_POINT_GRAPHICS, p_pipeline.layout, i, 1, &set, 0, 0);
+    }
 }
 
 void CuRenderDevice::draw() {

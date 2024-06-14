@@ -50,6 +50,7 @@ void GeometryPass::init() {
     test_buffer = device->create_buffer(sizeof(float) * 4, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
     geometry_descriptor_writer.write_buffer(0, test_buffer, 0, sizeof(float) * 4,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     geometry_descriptor_writer.update_set(layout_info.descriptor_sets[0]);
+    geometry_descriptor_writer.update_set(layout_info.descriptor_sets[1]);
     geometry_descriptor_writer.clear();
 };
 
