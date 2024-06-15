@@ -79,6 +79,7 @@ private:
 
 struct PipelineLayoutInfo {
     std::vector<VkDescriptorSetLayout> descriptor_layouts = {};
+    std::vector<VkPushConstantRange> push_constants = {};
 };
 
 struct FrameData {
@@ -119,6 +120,7 @@ public:
     void begin_recording();
     void prepare_image(Texture& p_texture, ImageType p_image_type);
     void bind_pipeline(const RenderPipeline& p_pipeline);
+    void bind_push_constant(const RenderPipeline& p_pipeline, VkShaderStageFlags p_shaderStages, uint32_t p_offset, uint32_t p_size, void* p_data);
     void draw();
     void submit_image(Texture& p_from, Texture* p_to = nullptr);
     void finish_recording();

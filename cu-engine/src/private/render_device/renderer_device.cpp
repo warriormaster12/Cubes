@@ -265,6 +265,10 @@ Buffer CuRenderDevice::create_buffer(size_t p_size, VkBufferUsageFlags p_usage, 
 }
 
 void CuRenderDevice::write_buffer(void* p_data, size_t p_size, Buffer& buffer) {
+    if (buffer.buffer == VK_NULL_HANDLE) {
+        ENGINE_WARN("Can't write data to a buffer that isn't created");
+        return;
+    }
     char* buffer_data;
     vmaMapMemory(allocator, buffer.allocation, (void**)&buffer_data);
     memcpy(buffer_data, p_data, p_size);
@@ -272,6 +276,7 @@ void CuRenderDevice::write_buffer(void* p_data, size_t p_size, Buffer& buffer) {
 }
 
 void CuRenderDevice::clear_buffer(Buffer p_buffer) {
+    if (p_buffer.buffer == VK_NULL_HANDLE) return;
     vmaDestroyBuffer(allocator, p_buffer.buffer, p_buffer.allocation);
 }
 
@@ -294,7 +299,9 @@ bool CuRenderDevice::create_texture(VkFormat p_format, VkExtent3D p_extent, VkIm
 }
 
 void CuRenderDevice::clear_texture(Texture& p_texture) {
+    if (p_texture.view == VK_NULL_HANDLE) return;
     vkDestroyImageView(device, p_texture.view, nullptr);
+    if (p_texture.image == VK_NULL_HANDLE) return;
     vmaDestroyImage(allocator, p_texture.image, p_texture.allocation);
 }
 
@@ -438,8 +445,11 @@ struct BindingEqual {
 
 const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(VkDevice p_device, const std::vector<CompiledShaderInfo>& p_shader_infos) {
     std::vector<VkDescriptorSetLayout> out_layouts = {};
+    std::vector<VkPushConstantRange> out_push_constant = {};
+
     std::unordered_map<size_t, std::vector<VkDescriptorSetLayoutBinding>> unique_bindings;
     std::unordered_map<size_t, VkDescriptorSetLayoutCreateInfo> unique_layouts;
+    std::unordered_map<size_t, VkPushConstantRange> unique_push_constants;
     std::unordered_map<VkShaderStageFlagBits, SpvReflectShaderModule> reflect_modules = {};
 
     for (int i = 0; i < p_shader_infos.size(); ++i) {
@@ -461,7 +471,37 @@ const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(VkDevice p_devi
 
         reflect_modules[shader_stage] = module;
     }
+    //reflect push constants
+    for (std::pair<VkShaderStageFlagBits, SpvReflectShaderModule> entry : reflect_modules) {
+        SpvReflectShaderModule& module = entry.second;
 
+        uint32_t count = 0;
+        SpvReflectResult result = spvReflectEnumeratePushConstantBlocks(&module, &count, NULL);
+        assert(result == SPV_REFLECT_RESULT_SUCCESS);
+
+        std::vector<SpvReflectBlockVariable*> push_constants(count);
+        result = spvReflectEnumeratePushConstantBlocks(&module, &count, push_constants.data());
+        assert(result == SPV_REFLECT_RESULT_SUCCESS);
+        
+        for (int i = 0; i < push_constants.size(); ++i) {
+            const SpvReflectBlockVariable& constant = *(push_constants[i]);
+
+            VkPushConstantRange push_constant_range = {};
+            push_constant_range.stageFlags = static_cast<VkShaderStageFlagBits>(module.shader_stage);
+            push_constant_range.offset = constant.offset;
+            push_constant_range.size = constant.size;
+
+            size_t hash = std::hash<uint32_t>{}(push_constant_range.offset) ^
+                          std::hash<uint32_t>{}(push_constant_range.size);
+
+            if (unique_push_constants.find(hash) != unique_push_constants.end()) {
+                unique_push_constants[hash].stageFlags |= push_constant_range.stageFlags;
+            } else {
+                unique_push_constants[hash] = push_constant_range;
+            }
+        }
+    }
+    //reflect descriptor sets
     for (std::pair<VkShaderStageFlagBits, SpvReflectShaderModule> entry : reflect_modules) {
         SpvReflectShaderModule& module = entry.second;
         
@@ -521,8 +561,13 @@ const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(VkDevice p_devi
         descriptor_layouts.push_back(layout);
     }
 
+    for (const auto& entry : unique_push_constants) {
+        out_push_constant.push_back(entry.second);
+    }
+
     PipelineLayoutInfo info = {};
     info.descriptor_layouts = out_layouts;
+    info.push_constants = out_push_constant;
     
     return info;
 };
@@ -579,8 +624,8 @@ RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<Compiled
     VkPipelineLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.flags = 0;
-    layout_info.pPushConstantRanges = nullptr;
-    layout_info.pushConstantRangeCount = 0;
+    layout_info.pPushConstantRanges = pipeline_layout_info.push_constants.data();
+    layout_info.pushConstantRangeCount = pipeline_layout_info.push_constants.size();
     layout_info.pSetLayouts = pipeline_layout_info.descriptor_layouts.data();
     layout_info.setLayoutCount = pipeline_layout_info.descriptor_layouts.size();
 
@@ -790,6 +835,11 @@ void CuRenderDevice::bind_pipeline(const RenderPipeline& p_pipeline) {
     }
 }
 
+void CuRenderDevice::bind_push_constant(const RenderPipeline &p_pipeline, VkShaderStageFlags p_shaderStages, uint32_t p_offset, uint32_t p_size, void *p_data) {
+    VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
+    vkCmdPushConstants(cmb, p_pipeline.layout, p_shaderStages, p_offset, p_size, p_data);
+}
+
 void CuRenderDevice::draw() {
     VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
     vkCmdDraw(cmb, 3, 1, 0, 0);
@@ -924,6 +974,9 @@ void DescriptorWriter::write_buffer(int p_binding, Buffer& p_buffer, size_t p_of
 
 void DescriptorWriter::update_set(VkDescriptorSet p_set) {
     CuRenderDevice* render_device = CuRenderDevice::get_singleton();
+    if (p_set == VK_NULL_HANDLE) {
+        ENGINE_WARN("VK_NULL_HANDLE set discovered. Can't write to it");
+    }
     if (!render_device) {
         ENGINE_ERROR("Failed to update set");
         return;
