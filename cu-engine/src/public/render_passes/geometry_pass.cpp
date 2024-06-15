@@ -44,13 +44,13 @@ void GeometryPass::init() {
             return;
         }
     }
-    const PipelineLayoutInfo layout_info = device->generate_pipeline_info(shader_infos);
-    triangle_pipeline = device->create_render_pipeline(shader_infos, layout_info, &draw_texture);
+
+    triangle_pipeline = device->create_render_pipeline(shader_infos,&draw_texture);
 
     test_buffer = device->create_buffer(sizeof(float) * 4, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
     geometry_descriptor_writer.write_buffer(0, test_buffer, 0, sizeof(float) * 4,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    geometry_descriptor_writer.update_set(layout_info.descriptor_sets[0]);
-    geometry_descriptor_writer.update_set(layout_info.descriptor_sets[1]);
+    geometry_descriptor_writer.update_set(triangle_pipeline.sets[0]);
+    geometry_descriptor_writer.update_set(triangle_pipeline.sets[1]);
     geometry_descriptor_writer.clear();
 };
 
@@ -76,4 +76,5 @@ void GeometryPass::clear() {
     }
     device->clear_buffer(test_buffer);
     device->clear_texture(draw_texture);
+    triangle_pipeline.clear(device->get_raw_device());
 };

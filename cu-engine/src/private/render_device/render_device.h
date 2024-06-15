@@ -42,14 +42,15 @@ struct RenderPipeline {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets = {};
-    void clear(VkDevice& device) {
+    void clear(VkDevice p_device) {
         if (pipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(device, pipeline, nullptr);
+            vkDestroyPipeline(p_device, pipeline, nullptr);
         }
 
         if (layout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(device, layout, nullptr);
+            vkDestroyPipelineLayout(p_device, layout, nullptr);
         }
+        sets.clear();
     }
 };
 
@@ -78,7 +79,6 @@ private:
 
 struct PipelineLayoutInfo {
     std::vector<VkDescriptorSetLayout> descriptor_layouts = {};
-    std::vector<VkDescriptorSet> descriptor_sets = {};
 };
 
 struct FrameData {
@@ -97,6 +97,14 @@ enum ImageType {
     STENCIL,
 };
 
+class LayoutAllocator {
+public:
+    const PipelineLayoutInfo generate_pipeline_info(VkDevice p_device, const std::vector<CompiledShaderInfo>& p_shader_infos);
+    void clear();
+private: 
+    std::vector<VkDescriptorSetLayout> descriptor_layouts;
+};
+
 class CuRenderDevice {
 public:
     CuRenderDevice();
@@ -107,8 +115,7 @@ public:
     void write_buffer(void* p_data, size_t p_size, Buffer& buffer);
     void clear_buffer(Buffer p_buffer);
     void clear_texture(Texture& p_texture);
-    const PipelineLayoutInfo generate_pipeline_info(const std::vector<CompiledShaderInfo>& p_shader_infos);
-    RenderPipeline create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info, const Texture* p_texture = nullptr);
+    RenderPipeline create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const Texture* p_texture = nullptr);
     void begin_recording();
     void prepare_image(Texture& p_texture, ImageType p_image_type);
     void bind_pipeline(const RenderPipeline& p_pipeline);
@@ -136,6 +143,8 @@ private:
     FrameData frame_data[FRAME_OVERLAP];
 
     ExecutionQueuer main_deletion_queue = ExecutionQueuer(true);
+
+    LayoutAllocator main_layout_allocator;
 
     int current_frame_idx = 0;
     int frame_count = 0;

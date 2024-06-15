@@ -436,8 +436,8 @@ struct BindingEqual {
     }
 };
 
-const PipelineLayoutInfo CuRenderDevice::generate_pipeline_info(const std::vector<CompiledShaderInfo>& p_shader_infos) {
-    std::vector<VkDescriptorSetLayout> descriptor_layouts = {};
+const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(VkDevice p_device, const std::vector<CompiledShaderInfo>& p_shader_infos) {
+    std::vector<VkDescriptorSetLayout> out_layouts = {};
     std::unordered_map<size_t, std::vector<VkDescriptorSetLayoutBinding>> unique_bindings;
     std::unordered_map<size_t, VkDescriptorSetLayoutCreateInfo> unique_layouts;
     std::unordered_map<VkShaderStageFlagBits, SpvReflectShaderModule> reflect_modules = {};
@@ -507,7 +507,6 @@ const PipelineLayoutInfo CuRenderDevice::generate_pipeline_info(const std::vecto
         }
     }
 
-    std::vector<VkDescriptorSet> descriptor_sets = {};
     // Create Vulkan descriptor set layouts from the unique layout infos
     for (const auto& entry : unique_bindings) {
         VkDescriptorSetLayoutCreateInfo info = {};
@@ -516,29 +515,37 @@ const PipelineLayoutInfo CuRenderDevice::generate_pipeline_info(const std::vecto
         info.pBindings = entry.second.data();
 
         VkDescriptorSetLayout layout;
-        VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &layout));
+        VK_CHECK(vkCreateDescriptorSetLayout(p_device, &info, nullptr, &layout));
 
+        out_layouts.push_back(layout);
         descriptor_layouts.push_back(layout);
-
-        for (int i = 0; i < FRAME_OVERLAP; ++i) {
-            FrameData& current_frame = frame_data[i];
-            VkDescriptorSet set = current_frame.descriptor_allocator.allocate(device, layout);
-            descriptor_sets.push_back(std::move(set));
-        }
     }
 
     PipelineLayoutInfo info = {};
-    info.descriptor_layouts = descriptor_layouts;
-    info.descriptor_sets = descriptor_sets;
+    info.descriptor_layouts = out_layouts;
     
     return info;
 };
 
-RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const PipelineLayoutInfo& p_layout_info, const Texture* p_texture /*= nullptr*/) {
+void LayoutAllocator::clear() {
+    CuRenderDevice* device = CuRenderDevice::get_singleton();
+    if (!device) {
+        ENGINE_ERROR("Can't find device in LayoutAllocator");
+        return;
+    }
+
+    for (int i = 0; i < descriptor_layouts.size(); ++i) {
+        vkDestroyDescriptorSetLayout(device->get_raw_device(), descriptor_layouts[i], nullptr);
+    }
+}
+
+RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<CompiledShaderInfo>& p_shader_infos, const Texture* p_texture /*= nullptr*/) {
     std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {};
     
     shader_stages.resize(p_shader_infos.size());
+
+    RenderPipeline out_pipeline = {};
 
     for (int i = 0; i < p_shader_infos.size(); ++i) {
         const CompiledShaderInfo shader_info = p_shader_infos[i];
@@ -567,16 +574,17 @@ RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<Compiled
         shader_stages[i] = stage_info;
     }
 
+    PipelineLayoutInfo pipeline_layout_info = main_layout_allocator.generate_pipeline_info(device, p_shader_infos);
+
     VkPipelineLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.flags = 0;
     layout_info.pPushConstantRanges = nullptr;
     layout_info.pushConstantRangeCount = 0;
-    layout_info.pSetLayouts = p_layout_info.descriptor_layouts.data();
-    layout_info.setLayoutCount = p_layout_info.descriptor_layouts.size();
+    layout_info.pSetLayouts = pipeline_layout_info.descriptor_layouts.data();
+    layout_info.setLayoutCount = pipeline_layout_info.descriptor_layouts.size();
 
-    VkPipelineLayout layout;
-    VK_CHECK(vkCreatePipelineLayout(device, &layout_info, nullptr, &layout));
+    VK_CHECK(vkCreatePipelineLayout(device, &layout_info, nullptr, &out_pipeline.layout));
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info{};
     input_assembly_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -638,7 +646,7 @@ RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<Compiled
     VkGraphicsPipelineCreateInfo pipeline_info = {};
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.pNext = &rendering_info;
-    pipeline_info.layout  = layout;
+    pipeline_info.layout  = out_pipeline.layout;
     pipeline_info.pInputAssemblyState = &input_assembly_info;
     pipeline_info.pDynamicState = &dynamic_state_info;
     pipeline_info.pColorBlendState = &color_blend_info;
@@ -653,21 +661,22 @@ RenderPipeline CuRenderDevice::create_render_pipeline(const std::vector<Compiled
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.basePipelineIndex = 0;
 
-    VkPipeline pipeline;
-    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline));
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &out_pipeline.pipeline));
 
     for (std::pair<const VkShaderStageFlagBits, VkShaderModule>& element : shader_modules) {
         vkDestroyShaderModule(device, element.second, nullptr);
     }
 
-    RenderPipeline out = {};
-    out.pipeline = pipeline;
-    out.layout = layout;
-    out.sets = p_layout_info.descriptor_sets;
-
-    main_deletion_queue.push_function([&](){out.clear(device);});
-    
-    return out;
+    std::vector<VkDescriptorSet> descriptor_sets = {};
+    out_pipeline.sets.resize(FRAME_OVERLAP * pipeline_layout_info.descriptor_layouts.size());
+    for (int i = 0; i < FRAME_OVERLAP; ++i) {
+        FrameData& current_frame = frame_data[i];
+        for (int j = 0; j < pipeline_layout_info.descriptor_layouts.size(); ++j) {
+            VkDescriptorSet set = current_frame.descriptor_allocator.allocate(device, pipeline_layout_info.descriptor_layouts[j]);
+            out_pipeline.sets[i + j] = set;
+        }
+    }
+    return out_pipeline;
 }
 
 void CuRenderDevice::prepare_image(Texture& p_texture, ImageType p_image_type) {
@@ -887,9 +896,10 @@ void CuRenderDevice::clear() {
     for (int i = 0; i < FRAME_OVERLAP; ++i) {
         FrameData& current_frame = frame_data[i];
         current_frame.deletion_queue.execute();
+        current_frame.descriptor_allocator.destroy_pools(device);
         
     }
-
+    main_layout_allocator.clear();
     main_deletion_queue.execute();
 }
 
