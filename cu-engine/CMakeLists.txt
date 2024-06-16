@@ -10,12 +10,12 @@ file(GLOB_RECURSE SRC ${PROJECT_SOURCE_DIR} src/*.cpp libs/volk/volk.c libs/vma/
 add_library(cu-engine ${SRC})
 
 target_include_directories(cu-engine
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/public
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/private
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/vulkan-headers
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/vma
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/volk
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/spirv_reflect
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/glm
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/vulkan-headers
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/vma
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/volk
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/spirv_reflect
 )
 
 add_subdirectory(libs/glfw EXCLUDE_FROM_ALL)
@@ -24,7 +24,7 @@ add_subdirectory(libs/fmt EXCLUDE_FROM_ALL)
 add_subdirectory(libs/glslang EXCLUDE_FROM_ALL)
 
 target_link_libraries(
-    cu-engine PRIVATE 
+    cu-engine PUBLIC 
     glfw 
     vk-bootstrap 
     fmt 
