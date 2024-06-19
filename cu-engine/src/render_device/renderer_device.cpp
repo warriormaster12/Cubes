@@ -38,6 +38,26 @@ void Swapchain::clear() {
   }
 }
 
+void CuRenderAttachmentBuilder::add_color_attachment(
+    std::array<float, 4> p_background_color /*= {0.0f, 0.0f, 0.0f, 1.0f}*/) {
+  if (!(result.aspect_flags & VK_IMAGE_ASPECT_COLOR_BIT) ||
+      result.aspect_flags == 0) {
+    result.aspect_flags |= VK_IMAGE_ASPECT_COLOR_BIT;
+  }
+  result.background_color = p_background_color;
+  VkRenderingAttachmentInfo color_attachment_info = {};
+  color_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+  color_attachment_info.pNext = nullptr;
+
+  color_attachment_info.imageView = nullptr; // we'll attach the view later
+  color_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  color_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  color_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  result.color_attachments.push_back(color_attachment_info);
+}
+
+CuRenderAttachemnts CuRenderAttachmentBuilder::build() { return result; }
+
 CuRenderDevice::CuRenderDevice() { singleton = this; }
 
 CuRenderDevice *CuRenderDevice::get_singleton() { return singleton; }
@@ -205,61 +225,99 @@ bool CuRenderDevice::init(CuWindow *p_window) {
 
   main_deletion_queue.push_function([&]() { swapchain.clear(); });
 
-  VkCommandPoolCreateInfo command_pool_info = {};
-  command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-  command_pool_info.queueFamilyIndex = graphics_queue_family;
-  command_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-  command_pool_info.pNext = nullptr;
+  // per frame resource allocation
+  {
+    VkCommandPoolCreateInfo command_pool_info = {};
+    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    command_pool_info.queueFamilyIndex = graphics_queue_family;
+    command_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    command_pool_info.pNext = nullptr;
 
-  VkFenceCreateInfo render_fence_info = {};
-  render_fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  render_fence_info.pNext = nullptr;
-  render_fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    VkFenceCreateInfo render_fence_info = {};
+    render_fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    render_fence_info.pNext = nullptr;
+    render_fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-  VkSemaphoreCreateInfo render_swapchain_semaphore_info = {};
-  render_swapchain_semaphore_info.sType =
-      VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-  render_swapchain_semaphore_info.pNext = nullptr;
-  render_swapchain_semaphore_info.flags = 0;
+    VkSemaphoreCreateInfo render_swapchain_semaphore_info = {};
+    render_swapchain_semaphore_info.sType =
+        VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    render_swapchain_semaphore_info.pNext = nullptr;
+    render_swapchain_semaphore_info.flags = 0;
 
-  for (int i = 0; i < FRAME_OVERLAP; ++i) {
-    FrameData &current_frame = frame_data[i];
-    VK_CHECK(vkCreateCommandPool(device, &command_pool_info, nullptr,
-                                 &current_frame.cmp));
+    for (int i = 0; i < FRAME_OVERLAP; ++i) {
+      FrameData &current_frame = frame_data[i];
+      VK_CHECK(vkCreateCommandPool(device, &command_pool_info, nullptr,
+                                   &current_frame.cmp));
+
+      VkCommandBufferAllocateInfo command_buffer_alloc_info = {};
+      command_buffer_alloc_info.sType =
+          VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+      command_buffer_alloc_info.commandPool = current_frame.cmp;
+      command_buffer_alloc_info.pNext = nullptr;
+      command_buffer_alloc_info.commandBufferCount = 1;
+      command_buffer_alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      VK_CHECK(vkAllocateCommandBuffers(device, &command_buffer_alloc_info,
+                                        &current_frame.cmb));
+
+      VK_CHECK(vkCreateSemaphore(device, &render_swapchain_semaphore_info,
+                                 nullptr, &current_frame.swapchain_semaphore));
+      VK_CHECK(vkCreateSemaphore(device, &render_swapchain_semaphore_info,
+                                 nullptr, &current_frame.render_semaphore));
+
+      VK_CHECK(vkCreateFence(device, &render_fence_info, nullptr,
+                             &current_frame.render_fence));
+
+      std::vector<DescriptorAllocator::PoolSizeRatio> frame_sizes = {
+          {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3},
+          {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3},
+          {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
+          {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4},
+      };
+
+      current_frame.descriptor_allocator.init(device, 1000, frame_sizes);
+
+      current_frame.deletion_queue.push_function([&]() {
+        current_frame.descriptor_allocator.destroy_pools(device);
+        vkDestroySemaphore(device, current_frame.swapchain_semaphore, nullptr);
+        vkDestroySemaphore(device, current_frame.render_semaphore, nullptr);
+        vkDestroyFence(device, current_frame.render_fence, nullptr);
+        vkDestroyCommandPool(device, current_frame.cmp, nullptr);
+      });
+    }
+  }
+
+  // immediate resource allocation
+  {
+    VkCommandPoolCreateInfo command_pool_info = {};
+    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    command_pool_info.queueFamilyIndex = graphics_queue_family;
+    command_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    command_pool_info.pNext = nullptr;
+
+    VK_CHECK(
+        vkCreateCommandPool(device, &command_pool_info, nullptr, &imm_cpool));
 
     VkCommandBufferAllocateInfo command_buffer_alloc_info = {};
     command_buffer_alloc_info.sType =
         VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    command_buffer_alloc_info.commandPool = current_frame.cmp;
+    command_buffer_alloc_info.commandPool = imm_cpool;
     command_buffer_alloc_info.pNext = nullptr;
     command_buffer_alloc_info.commandBufferCount = 1;
     command_buffer_alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    VK_CHECK(vkAllocateCommandBuffers(device, &command_buffer_alloc_info,
-                                      &current_frame.cmb));
 
-    VK_CHECK(vkCreateSemaphore(device, &render_swapchain_semaphore_info,
-                               nullptr, &current_frame.swapchain_semaphore));
-    VK_CHECK(vkCreateSemaphore(device, &render_swapchain_semaphore_info,
-                               nullptr, &current_frame.render_semaphore));
+    VK_CHECK(
+        vkAllocateCommandBuffers(device, &command_buffer_alloc_info, &imm_cmb));
 
-    VK_CHECK(vkCreateFence(device, &render_fence_info, nullptr,
-                           &current_frame.render_fence));
+    VkFenceCreateInfo imm_fence_info = {};
+    imm_fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    imm_fence_info.pNext = nullptr;
+    imm_fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    std::vector<DescriptorAllocator::PoolSizeRatio> frame_sizes = {
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4},
-    };
+    VK_CHECK(vkCreateFence(device, &imm_fence_info, nullptr, &imm_fence));
 
-    current_frame.descriptor_allocator.init(device, 1000, frame_sizes);
-
-    current_frame.deletion_queue.push_function([&]() {
-      current_frame.descriptor_allocator.destroy_pools(device);
-      vkDestroySemaphore(device, current_frame.swapchain_semaphore, nullptr);
-      vkDestroySemaphore(device, current_frame.render_semaphore, nullptr);
-      vkDestroyFence(device, current_frame.render_fence, nullptr);
-      vkDestroyCommandPool(device, current_frame.cmp, nullptr);
+    main_deletion_queue.push_function([&]() {
+      vkDestroyFence(device, imm_fence, nullptr);
+      vkDestroyCommandPool(device, imm_cpool, nullptr);
     });
   }
 
@@ -295,6 +353,20 @@ void CuRenderDevice::write_buffer(void *p_data, size_t p_size, Buffer &buffer) {
   vmaMapMemory(allocator, buffer.allocation, (void **)&buffer_data);
   memcpy(buffer_data, p_data, p_size);
   vmaUnmapMemory(allocator, buffer.allocation);
+}
+
+void CuRenderDevice::copy_buffer(const Buffer &p_source,
+                                 const Buffer &p_destination,
+                                 VkDeviceSize p_size,
+                                 VkDeviceSize p_source_offset,
+                                 VkDeviceSize p_destination_offset) {
+  VkBufferCopy buffer_copy = {};
+  buffer_copy.size = p_size;
+  buffer_copy.srcOffset = p_source_offset;
+  buffer_copy.dstOffset = p_destination_offset;
+
+  vkCmdCopyBuffer(imm_cmb, p_source.buffer, p_destination.buffer, 1,
+                  &buffer_copy);
 }
 
 void CuRenderDevice::clear_buffer(Buffer p_buffer) {
@@ -487,6 +559,9 @@ const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(
     VkDevice p_device, const std::vector<CompiledShaderInfo> &p_shader_infos) {
   std::vector<VkDescriptorSetLayout> out_layouts = {};
   std::vector<VkPushConstantRange> out_push_constant = {};
+  std::vector<VkVertexInputAttributeDescription> vertex_attribute_descriptions =
+      {};
+  std::vector<VkVertexInputBindingDescription> vertex_binding_descriptions = {};
 
   std::unordered_map<uint32_t,
                      std::unordered_map<size_t, VkDescriptorSetLayoutBinding>>
@@ -515,6 +590,63 @@ const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(
     }
 
     reflect_modules[shader_stage] = module;
+  }
+
+  // Reflect Vertex layout
+  for (std::pair<VkShaderStageFlagBits, SpvReflectShaderModule> entry :
+       reflect_modules) {
+
+    SpvReflectShaderModule &module = entry.second;
+    if (module.shader_stage ==
+        static_cast<VkShaderStageFlags>(VK_SHADER_STAGE_VERTEX_BIT)) {
+      // Enumerate and extract shader's input variables
+      uint32_t varCount = 0;
+      SpvReflectResult result =
+          spvReflectEnumerateInputVariables(&module, &varCount, nullptr);
+      assert(result == SPV_REFLECT_RESULT_SUCCESS);
+      std::vector<SpvReflectInterfaceVariable *> inputVars(varCount);
+      result = spvReflectEnumerateInputVariables(&module, &varCount,
+                                                 inputVars.data());
+      assert(result == SPV_REFLECT_RESULT_SUCCESS);
+
+      VkVertexInputBindingDescription binding_description = {};
+      binding_description.binding = 0;
+      binding_description.stride = 0;
+      binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+      for (int i = 0; i < inputVars.size(); i++) {
+        const SpvReflectInterfaceVariable &refl_var = *(inputVars[i]);
+        if (refl_var.decoration_flags & SPV_REFLECT_DECORATION_BUILT_IN) {
+          continue;
+        }
+
+        VkVertexInputAttributeDescription attribute = {};
+        attribute.binding = binding_description.binding;
+        attribute.location = refl_var.location;
+        attribute.format = static_cast<VkFormat>(inputVars[i]->format);
+        attribute.offset = 0;
+        vertex_attribute_descriptions.push_back(attribute);
+      }
+
+      if (vertex_attribute_descriptions.size() == 0) {
+        break;
+      }
+
+      std::sort(vertex_attribute_descriptions.begin(),
+                vertex_attribute_descriptions.end(),
+                [](const VkVertexInputAttributeDescription &a,
+                   const VkVertexInputAttributeDescription &b) {
+                  return a.location < b.location;
+                });
+
+      for (VkVertexInputAttributeDescription &attribute :
+           vertex_attribute_descriptions) {
+        attribute.offset = binding_description.stride;
+        binding_description.stride += get_format_size(attribute.format);
+      }
+
+      vertex_binding_descriptions.push_back(binding_description);
+    }
   }
   // Reflect push constants
   for (std::pair<VkShaderStageFlagBits, SpvReflectShaderModule> entry :
@@ -627,6 +759,8 @@ const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(
   PipelineLayoutInfo info = {};
   info.descriptor_layouts = out_layouts;
   info.push_constants = out_push_constant;
+  info.vertex_attributes = vertex_attribute_descriptions;
+  info.vertex_bindings = vertex_binding_descriptions;
 
   return info;
 }
@@ -642,6 +776,43 @@ void LayoutAllocator::clear() {
     vkDestroyDescriptorSetLayout(device->get_raw_device(),
                                  descriptor_layouts[i], nullptr);
   }
+}
+
+void CuRenderDevice::immediate_submit(std::function<void()> &&p_function) {
+  VK_CHECK(vkResetFences(device, 1, &imm_fence));
+  VK_CHECK(vkResetCommandBuffer(imm_cmb, 0));
+
+  VkCommandBufferBeginInfo imm_cmb_begin_info = {};
+  imm_cmb_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  imm_cmb_begin_info.pNext = nullptr;
+  imm_cmb_begin_info.pInheritanceInfo = nullptr;
+  imm_cmb_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  VK_CHECK(vkBeginCommandBuffer(imm_cmb, &imm_cmb_begin_info));
+
+  p_function();
+
+  VK_CHECK(vkEndCommandBuffer(imm_cmb));
+
+  VkCommandBufferSubmitInfo cmb_submit_info = {};
+  cmb_submit_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+  cmb_submit_info.pNext = nullptr;
+  cmb_submit_info.commandBuffer = imm_cmb;
+  cmb_submit_info.deviceMask = 0;
+
+  VkSubmitInfo2KHR submit_info = {};
+  submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2_KHR;
+  submit_info.pNext = nullptr;
+  submit_info.waitSemaphoreInfoCount = 0;
+  submit_info.pWaitSemaphoreInfos = nullptr;
+  submit_info.signalSemaphoreInfoCount = 0;
+  submit_info.pSignalSemaphoreInfos = nullptr;
+  submit_info.commandBufferInfoCount = 1;
+  submit_info.pCommandBufferInfos = &cmb_submit_info;
+
+  VK_CHECK(vkQueueSubmit2KHR(graphics_queue, 1, &submit_info, imm_fence));
+
+  VK_CHECK(vkWaitForFences(device, 1, &imm_fence, true, 9999999999));
 }
 
 RenderPipeline CuRenderDevice::create_render_pipeline(
@@ -705,8 +876,14 @@ RenderPipeline CuRenderDevice::create_render_pipeline(
   VkPipelineVertexInputStateCreateInfo vertex_input_info{};
   vertex_input_info.sType =
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vertex_input_info.vertexBindingDescriptionCount = 0;
-  vertex_input_info.vertexAttributeDescriptionCount = 0;
+  vertex_input_info.pVertexBindingDescriptions =
+      pipeline_layout_info.vertex_bindings.data();
+  vertex_input_info.vertexBindingDescriptionCount =
+      pipeline_layout_info.vertex_bindings.size();
+  vertex_input_info.pVertexAttributeDescriptions =
+      pipeline_layout_info.vertex_attributes.data();
+  vertex_input_info.vertexAttributeDescriptionCount =
+      pipeline_layout_info.vertex_attributes.size();
 
   std::array<VkDynamicState, 2> dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,
                                                   VK_DYNAMIC_STATE_SCISSOR};
@@ -806,38 +983,37 @@ RenderPipeline CuRenderDevice::create_render_pipeline(
   return out_pipeline;
 }
 
-void CuRenderDevice::prepare_image(Texture &p_texture, ImageType p_image_type) {
+void CuRenderDevice::prepare_image(const Texture &p_texture,
+                                   CuRenderAttachemnts &p_render_attachments) {
+
+  if (p_render_attachments.color_attachments.size() == 0) {
+    ENGINE_ERROR("No render attachments provided for this pass");
+    return;
+  }
+
   FrameData &current_frame = frame_data[current_frame_idx];
   VkCommandBuffer cmb = current_frame.cmb;
   transition_image(cmb, p_texture.image, VK_IMAGE_LAYOUT_UNDEFINED,
                    VK_IMAGE_LAYOUT_GENERAL);
-  VkImageAspectFlags aspect_flags = 0;
 
-  switch (p_image_type) {
-  case COLOR:
-    aspect_flags = VK_IMAGE_ASPECT_COLOR_BIT;
-    break;
-  case DEPTH:
-    aspect_flags = VK_IMAGE_ASPECT_DEPTH_BIT;
-    break;
-  case STENCIL:
-    aspect_flags = VK_IMAGE_ASPECT_STENCIL_BIT;
-    break;
-  }
   VkImageSubresourceRange subresource_range =
-      image_subresource_range(aspect_flags);
+      image_subresource_range(p_render_attachments.aspect_flags);
+
+  if (p_render_attachments.color_attachments.size() > 0) {
+    VkClearColorValue clearValue = {{p_render_attachments.background_color[0],
+                                     p_render_attachments.background_color[1],
+                                     p_render_attachments.background_color[2],
+                                     p_render_attachments.background_color[3]}};
+    vkCmdClearColorImage(cmb, p_texture.image, VK_IMAGE_LAYOUT_GENERAL,
+                         &clearValue, 1, &subresource_range);
+  }
 
   transition_image(cmb, p_texture.image, VK_IMAGE_LAYOUT_GENERAL,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-  VkRenderingAttachmentInfo color_attachment_info{};
-  color_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-  color_attachment_info.pNext = nullptr;
-
-  color_attachment_info.imageView = p_texture.view;
-  color_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-  color_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-  color_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  for (int i = 0; i < p_render_attachments.color_attachments.size(); ++i) {
+    p_render_attachments.color_attachments[i].imageView = p_texture.view;
+  }
 
   VkRenderingInfo rendering_info = {};
   rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -845,8 +1021,10 @@ void CuRenderDevice::prepare_image(Texture &p_texture, ImageType p_image_type) {
   rendering_info.renderArea =
       VkRect2D{VkOffset2D{0, 0},
                VkExtent2D{p_texture.extent.width, p_texture.extent.height}};
-  rendering_info.pColorAttachments = &color_attachment_info;
-  rendering_info.colorAttachmentCount = 1;
+  rendering_info.pColorAttachments =
+      p_render_attachments.color_attachments.data();
+  rendering_info.colorAttachmentCount =
+      p_render_attachments.color_attachments.size();
   rendering_info.pDepthAttachment = nullptr;
   rendering_info.pStencilAttachment = nullptr;
   rendering_info.layerCount = 1;
@@ -943,9 +1121,43 @@ void CuRenderDevice::bind_push_constant(const RenderPipeline &p_pipeline,
                      p_data);
 }
 
-void CuRenderDevice::draw() {
+void CuRenderDevice::bind_vertex_buffer(uint32_t p_first_binding,
+                                        uint32_t p_binding_count,
+                                        std::vector<Buffer> p_buffers,
+                                        std::vector<VkDeviceSize> p_offsets) {
+
   VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
-  vkCmdDraw(cmb, 3, 1, 0, 0);
+  std::vector<VkBuffer> raw_buffers(p_buffers.size());
+  for (int i = 0; i < p_buffers.size(); ++i) {
+    raw_buffers[i] = p_buffers[i].buffer;
+  }
+  vkCmdBindVertexBuffers(cmb, p_first_binding, p_binding_count,
+                         raw_buffers.data(), p_offsets.data());
+}
+
+void CuRenderDevice::bind_index_buffer(const Buffer &p_buffer,
+                                       VkDeviceSize p_offset,
+                                       bool p_u32 /*= false*/) {
+  VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
+  vkCmdBindIndexBuffer(cmb, p_buffer.buffer, p_offset,
+                       p_u32 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+}
+
+void CuRenderDevice::draw(uint32_t p_vertex_count, uint32_t p_instance_count,
+                          uint32_t p_first_vertex, uint32_t p_first_instance) {
+  VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
+  vkCmdDraw(cmb, p_vertex_count, p_instance_count, p_first_vertex,
+            p_first_instance);
+}
+
+void CuRenderDevice::draw_indexed(uint32_t p_index_count,
+                                  uint32_t p_instance_count,
+                                  uint32_t p_first_index,
+                                  int32_t p_vertex_offset,
+                                  uint32_t p_first_instance) {
+  VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
+  vkCmdDrawIndexed(cmb, p_index_count, p_instance_count, p_first_index,
+                   p_vertex_offset, p_first_instance);
 }
 
 void CuRenderDevice::submit_image(Texture &p_from,

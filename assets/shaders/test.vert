@@ -1,10 +1,7 @@
 #version 450
 
-vec2 positions[3] = vec2[](
-    vec2(0.0, -0.5),
-    vec2(0.5, 0.5),
-    vec2(-0.5, 0.5)
-);
+layout (location = 0) in vec2 inPos;
+
 
 layout(set = 0, binding = 0) uniform Camera {
     mat4 proj;
@@ -13,5 +10,5 @@ layout(set = 0, binding = 0) uniform Camera {
 
 
 void main() {
-    gl_Position = camera.proj * camera.view * vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    gl_Position = camera.proj * camera.view * vec4(inPos, 0.0, 1.0);
 }

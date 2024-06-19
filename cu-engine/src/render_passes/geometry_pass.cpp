@@ -10,6 +10,11 @@
 Texture draw_texture;
 RenderPipeline triangle_pipeline;
 Buffer test_buffer;
+Buffer test_vertex_buffer;
+
+std::vector<glm::vec2> vertices = {{-0.5f, -0.5f}, {0.5f, -0.5f},
+                                   {0.5f, 0.5f},   {-0.5f, -0.5f},
+                                   {0.5f, 0.5f},   {-0.5f, 0.5f}};
 
 DescriptorWriter geometry_descriptor_writer = {};
 
@@ -43,6 +48,26 @@ void GeometryPass::init() {
     if (!shader_compiler->compile_shader(shaders[i], &shader_infos[i])) {
       return;
     }
+  }
+
+  {
+    test_vertex_buffer = device->create_buffer(
+        sizeof(glm::vec2) * vertices.size(),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VMA_MEMORY_USAGE_GPU_ONLY);
+
+    Buffer staging_buffer = device->create_buffer(
+        sizeof(glm::vec2) * vertices.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VMA_MEMORY_USAGE_CPU_ONLY);
+
+    device->write_buffer(vertices.data(), sizeof(glm::vec2) * vertices.size(),
+                         staging_buffer);
+    device->immediate_submit([&]() {
+      device->copy_buffer(staging_buffer, test_vertex_buffer,
+                          sizeof(glm::vec2) * vertices.size(), 0, 0);
+    });
+
+    device->clear_buffer(staging_buffer);
   }
 
   triangle_pipeline =
@@ -81,11 +106,16 @@ void GeometryPass::update() {
   float color[4] = {std::sin(frame_number / 60.f), 0.0f,
                     std::cos(frame_number / 60.f), 1.0f};
   device->write_buffer(color, sizeof(float) * 4, test_buffer);
-  device->prepare_image(draw_texture, COLOR);
+
+  CuRenderAttachmentBuilder builder;
+  builder.add_color_attachment({0.0, 1.0, 0.0, 1.0});
+  CuRenderAttachemnts render_attachments = builder.build();
+  device->prepare_image(draw_texture, render_attachments);
   device->bind_pipeline(triangle_pipeline);
   device->bind_descriptor(triangle_pipeline, 0);
   device->bind_descriptor(triangle_pipeline, 1);
-  device->draw();
+  device->bind_vertex_buffer(0, 1, {test_vertex_buffer}, {0});
+  device->draw(vertices.size(), 1, 0, 0);
   device->submit_image(draw_texture);
 }
 
@@ -94,6 +124,7 @@ void GeometryPass::clear() {
     return;
   }
   device->clear_buffer(test_buffer);
+  device->clear_buffer(test_vertex_buffer);
   device->clear_texture(draw_texture);
   triangle_pipeline.clear(device->get_raw_device());
 };
