@@ -1,5 +1,7 @@
 #version 450
 
+layout(location = 0) in vec3 inNormals;
+
 layout(location = 0) out vec4 outColor;
 
 layout(set = 1, binding = 0) uniform Material {
@@ -7,5 +9,5 @@ layout(set = 1, binding = 0) uniform Material {
 } material;
 
 void main() {
-    outColor = material.color;
+    outColor = vec4(inNormals, 1.0);
 }

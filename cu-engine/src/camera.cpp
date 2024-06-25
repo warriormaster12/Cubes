@@ -1,9 +1,12 @@
 #include "camera.h"
 #include "render_device/render_device.h"
 #include "render_device/utils.h"
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
 #include <ext/matrix_clip_space.hpp>
 #include <ext/matrix_transform.hpp>
 #include <glm.hpp>
+#include <gtx/transform.hpp>
 
 Camera::Camera() {
   device = CuRenderDevice::get_singleton();
@@ -14,7 +17,7 @@ Camera::Camera() {
   }
 
   fov = 90;
-  znear = 0.01;
+  znear = 0.1;
   zfar = 100;
   active = true;
 }
@@ -31,7 +34,7 @@ void Camera::update() {
 
     gpu_data.projection = glm::perspective(fov, width / height, znear, zfar);
     gpu_data.view =
-        glm::lookAt(glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::lookAt(glm::vec3(3.0f, 3.0f, 3.0f), glm::vec3(0.0f, 0.0f, 0.0f),
                     glm::vec3(0.0f, 0.0f, 1.0f));
     gpu_data.projection[1][1] *= -1;
     dirty = true;

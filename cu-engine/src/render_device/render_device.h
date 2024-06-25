@@ -107,7 +107,7 @@ enum ImageType {
 
 struct CuRenderAttachemnts {
   std::vector<VkRenderingAttachmentInfo> color_attachments;
-  VkRenderingAttachmentInfo depth_attachment;
+  VkRenderingAttachmentInfo depth_attachment = {};
   VkImageAspectFlags aspect_flags = 0;
   std::array<float, 4> background_color;
 };
@@ -116,6 +116,8 @@ class CuRenderAttachmentBuilder {
 public:
   void add_color_attachment(std::array<float, 4> p_background_color = {
                                 0.0f, 0.0f, 0.0f, 1.0f});
+
+  void add_depth_attachment();
 
   CuRenderAttachemnts build();
 
@@ -154,10 +156,14 @@ public:
   void immediate_submit(std::function<void()> &&p_function);
   RenderPipeline
   create_render_pipeline(const std::vector<CompiledShaderInfo> &p_shader_infos,
-                         const Texture *p_texture = nullptr);
+                         const VkBool32 p_depth_write_test,
+                         const VkCompareOp p_depth_compare_op,
+                         const std::vector<Texture> p_color_textures = {},
+                         const VkFormat p_depth_format = VK_FORMAT_UNDEFINED);
   void begin_recording();
-  void prepare_image(const Texture &p_texture,
-                     CuRenderAttachemnts &p_render_attachments);
+  void prepare_image(CuRenderAttachemnts &p_render_attachments,
+                     const Texture *p_color_texture,
+                     const Texture *p_depth_texture = nullptr);
   void bind_pipeline(const RenderPipeline &p_pipeline);
   void bind_descriptor(const RenderPipeline &p_pipeline,
                        const uint32_t p_index);

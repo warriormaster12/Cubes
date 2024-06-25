@@ -50,10 +50,28 @@ void CuRenderAttachmentBuilder::add_color_attachment(
   color_attachment_info.pNext = nullptr;
 
   color_attachment_info.imageView = nullptr; // we'll attach the view later
-  color_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  color_attachment_info.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   color_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
   color_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   result.color_attachments.push_back(color_attachment_info);
+}
+
+void CuRenderAttachmentBuilder::add_depth_attachment() {
+  // if (!(result.aspect_flags & VK_IMAGE_ASPECT_DEPTH_BIT) ||
+  //     result.aspect_flags == 0) {
+  //   result.aspect_flags |= VK_IMAGE_ASPECT_DEPTH_BIT;
+  // }
+  VkRenderingAttachmentInfo depth_attachment_info = {};
+  depth_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+  depth_attachment_info.pNext = nullptr;
+
+  depth_attachment_info.imageView = nullptr; // we'll attach the view later
+  depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+  depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  depth_attachment_info.clearValue.depthStencil.depth = 1.f;
+
+  result.depth_attachment = depth_attachment_info;
 }
 
 CuRenderAttachemnts CuRenderAttachmentBuilder::build() { return result; }
@@ -392,8 +410,16 @@ bool CuRenderDevice::create_texture(VkFormat p_format, VkExtent3D p_extent,
                           &p_out_texture.image, &p_out_texture.allocation,
                           nullptr));
 
+  if ((p_image_usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) {
+    p_out_texture.aspect_flags |= VK_IMAGE_ASPECT_COLOR_BIT;
+  }
+
+  if ((p_image_usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+    // For now we only support depth aspect.
+    p_out_texture.aspect_flags |= VK_IMAGE_ASPECT_DEPTH_BIT;
+  }
   VkImageViewCreateInfo rview_info = imageview_create_info(
-      p_out_texture.format, p_out_texture.image, VK_IMAGE_ASPECT_COLOR_BIT);
+      p_out_texture.format, p_out_texture.image, p_out_texture.aspect_flags);
 
   VK_CHECK(
       vkCreateImageView(device, &rview_info, nullptr, &p_out_texture.view));
@@ -817,7 +843,9 @@ void CuRenderDevice::immediate_submit(std::function<void()> &&p_function) {
 
 RenderPipeline CuRenderDevice::create_render_pipeline(
     const std::vector<CompiledShaderInfo> &p_shader_infos,
-    const Texture *p_texture /*= nullptr*/) {
+    const VkBool32 p_depth_write_test, const VkCompareOp p_depth_compare_op,
+    const std::vector<Texture> p_color_textures /*= {}*/,
+    const VkFormat p_depth_format /*= VK_FORMAT_UNDEFINED*/) {
   std::unordered_map<VkShaderStageFlagBits, VkShaderModule> shader_modules = {};
   std::vector<VkPipelineShaderStageCreateInfo> shader_stages = {};
 
@@ -894,11 +922,23 @@ RenderPipeline CuRenderDevice::create_render_pipeline(
   dynamic_state_info.pDynamicStates = dynamic_states.data();
   dynamic_state_info.dynamicStateCount = dynamic_states.size();
 
+  std::vector<VkFormat> color_formats = {};
+  color_formats.resize(p_color_textures.size() > 0 ? p_color_textures.size()
+                                                   : 0);
+
+  if (p_color_textures.size() > 0) {
+    for (int i = 0; i < p_color_textures.size(); ++i) {
+      color_formats[i] = p_color_textures[i].format;
+    }
+  } else {
+    color_formats[0] = swapchain.format;
+  }
+
   VkPipelineRenderingCreateInfoKHR rendering_info = {};
   rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-  rendering_info.colorAttachmentCount = 1;
-  rendering_info.pColorAttachmentFormats =
-      &(p_texture ? p_texture->format : swapchain.format);
+  rendering_info.colorAttachmentCount = color_formats.size();
+  rendering_info.pColorAttachmentFormats = color_formats.data();
+  rendering_info.depthAttachmentFormat = p_depth_format;
   rendering_info.viewMask = 0;
 
   VkPipelineViewportStateCreateInfo viewport_state_info = {};
@@ -940,6 +980,21 @@ RenderPipeline CuRenderDevice::create_render_pipeline(
   multisampling_info.sampleShadingEnable = VK_FALSE;
   multisampling_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+  VkPipelineDepthStencilStateCreateInfo depth_stencil_info = {};
+  depth_stencil_info.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  depth_stencil_info.depthCompareOp = p_depth_compare_op;
+  depth_stencil_info.depthTestEnable = p_depth_write_test;
+  depth_stencil_info.depthWriteEnable = VK_TRUE;
+  depth_stencil_info.depthBoundsTestEnable = VK_FALSE;
+  depth_stencil_info.minDepthBounds = 0.0f;
+  depth_stencil_info.maxDepthBounds = 1.0f;
+
+  // No stencil support atm
+  depth_stencil_info.stencilTestEnable = VK_FALSE;
+  depth_stencil_info.front = {}; // Optional
+  depth_stencil_info.back = {};  // Optional
+
   VkGraphicsPipelineCreateInfo pipeline_info = {};
   pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
   pipeline_info.pNext = &rendering_info;
@@ -949,6 +1004,7 @@ RenderPipeline CuRenderDevice::create_render_pipeline(
   pipeline_info.pColorBlendState = &color_blend_info;
   pipeline_info.pVertexInputState = &vertex_input_info;
   pipeline_info.pRasterizationState = &rasterizer_info;
+  pipeline_info.pDepthStencilState = &depth_stencil_info;
   pipeline_info.pStages = shader_stages.data();
   pipeline_info.stageCount = shader_modules.size();
   pipeline_info.pMultisampleState = &multisampling_info;
@@ -983,49 +1039,62 @@ RenderPipeline CuRenderDevice::create_render_pipeline(
   return out_pipeline;
 }
 
-void CuRenderDevice::prepare_image(const Texture &p_texture,
-                                   CuRenderAttachemnts &p_render_attachments) {
-
+void CuRenderDevice::prepare_image(
+    CuRenderAttachemnts &p_render_attachments, const Texture *p_color_texture,
+    const Texture *p_depth_texture /*= nullptr*/) {
   if (p_render_attachments.color_attachments.size() == 0) {
     ENGINE_ERROR("No render attachments provided for this pass");
     return;
   }
 
+  if (p_color_texture == nullptr) {
+    ENGINE_ERROR("Color texture cannot be nullptr");
+    return;
+  }
+
   FrameData &current_frame = frame_data[current_frame_idx];
   VkCommandBuffer cmb = current_frame.cmb;
-  transition_image(cmb, p_texture.image, VK_IMAGE_LAYOUT_UNDEFINED,
+  transition_image(cmb, p_color_texture->image, VK_IMAGE_LAYOUT_UNDEFINED,
                    VK_IMAGE_LAYOUT_GENERAL);
 
   VkImageSubresourceRange subresource_range =
-      image_subresource_range(p_render_attachments.aspect_flags);
+      image_subresource_range(p_color_texture->aspect_flags);
 
   if (p_render_attachments.color_attachments.size() > 0) {
     VkClearColorValue clearValue = {{p_render_attachments.background_color[0],
                                      p_render_attachments.background_color[1],
                                      p_render_attachments.background_color[2],
                                      p_render_attachments.background_color[3]}};
-    vkCmdClearColorImage(cmb, p_texture.image, VK_IMAGE_LAYOUT_GENERAL,
+    vkCmdClearColorImage(cmb, p_color_texture->image, VK_IMAGE_LAYOUT_GENERAL,
                          &clearValue, 1, &subresource_range);
   }
 
-  transition_image(cmb, p_texture.image, VK_IMAGE_LAYOUT_GENERAL,
+  transition_image(cmb, p_color_texture->image, VK_IMAGE_LAYOUT_GENERAL,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
   for (int i = 0; i < p_render_attachments.color_attachments.size(); ++i) {
-    p_render_attachments.color_attachments[i].imageView = p_texture.view;
+    p_render_attachments.color_attachments[i].imageView = p_color_texture->view;
+  }
+
+  if (p_depth_texture) {
+    p_render_attachments.depth_attachment.imageView = p_depth_texture->view;
+
+    transition_image(cmb, p_depth_texture->image, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
   }
 
   VkRenderingInfo rendering_info = {};
   rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
   rendering_info.pNext = nullptr;
   rendering_info.renderArea =
-      VkRect2D{VkOffset2D{0, 0},
-               VkExtent2D{p_texture.extent.width, p_texture.extent.height}};
+      VkRect2D{VkOffset2D{0, 0}, VkExtent2D{p_color_texture->extent.width,
+                                            p_color_texture->extent.height}};
   rendering_info.pColorAttachments =
       p_render_attachments.color_attachments.data();
   rendering_info.colorAttachmentCount =
       p_render_attachments.color_attachments.size();
-  rendering_info.pDepthAttachment = nullptr;
+  rendering_info.pDepthAttachment =
+      p_depth_texture ? &p_render_attachments.depth_attachment : nullptr;
   rendering_info.pStencilAttachment = nullptr;
   rendering_info.layerCount = 1;
 
@@ -1035,8 +1104,8 @@ void CuRenderDevice::prepare_image(const Texture &p_texture,
   VkViewport viewport = {};
   viewport.x = 0;
   viewport.y = 0;
-  viewport.width = p_texture.extent.width;
-  viewport.height = p_texture.extent.height;
+  viewport.width = p_color_texture->extent.width;
+  viewport.height = p_color_texture->extent.height;
   viewport.minDepth = 0.f;
   viewport.maxDepth = 1.f;
 
@@ -1045,8 +1114,8 @@ void CuRenderDevice::prepare_image(const Texture &p_texture,
   VkRect2D scissor = {};
   scissor.offset.x = 0;
   scissor.offset.y = 0;
-  scissor.extent.width = p_texture.extent.width;
-  scissor.extent.height = p_texture.extent.height;
+  scissor.extent.width = p_color_texture->extent.width;
+  scissor.extent.height = p_color_texture->extent.height;
 
   vkCmdSetScissor(cmb, 0, 1, &scissor);
 }
@@ -1125,7 +1194,6 @@ void CuRenderDevice::bind_vertex_buffer(uint32_t p_first_binding,
                                         uint32_t p_binding_count,
                                         std::vector<Buffer> p_buffers,
                                         std::vector<VkDeviceSize> p_offsets) {
-
   VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
   std::vector<VkBuffer> raw_buffers(p_buffers.size());
   for (int i = 0; i < p_buffers.size(); ++i) {
@@ -1140,7 +1208,7 @@ void CuRenderDevice::bind_index_buffer(const Buffer &p_buffer,
                                        bool p_u32 /*= false*/) {
   VkCommandBuffer cmb = frame_data[current_frame_idx].cmb;
   vkCmdBindIndexBuffer(cmb, p_buffer.buffer, p_offset,
-                       p_u32 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+                       p_u32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
 }
 
 void CuRenderDevice::draw(uint32_t p_vertex_count, uint32_t p_instance_count,
@@ -1193,7 +1261,6 @@ void CuRenderDevice::submit_image(Texture &p_from,
 }
 
 void CuRenderDevice::finish_recording() {
-
   FrameData &current_frame = frame_data[current_frame_idx];
 
   VkCommandBuffer cmb = current_frame.cmb;

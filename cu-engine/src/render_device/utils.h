@@ -37,10 +37,11 @@ private:
 };
 
 struct Texture {
-  VkImage image;
-  VkImageView view;
+  VkImage image = VK_NULL_HANDLE;
+  VkImageView view = VK_NULL_HANDLE;
   VmaAllocation allocation;
   VkExtent3D extent;
+  VkImageAspectFlags aspect_flags = 0;
   VkFormat format;
 };
 
