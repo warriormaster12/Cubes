@@ -12,8 +12,12 @@ layout(set = 0, binding = 0) uniform Camera {
     mat4 view;
 } camera;
 
+layout(std140, set = 1, binding = 0) readonly buffer ObjectData {
+    mat4 transforms[];
+} objectData;
 
 void main() {
     outNormals = inNormals;
-    gl_Position = camera.proj * camera.view * vec4(inPos, 1.0);
+    mat4 currentTransform = objectData.transforms[gl_InstanceIndex];
+    gl_Position = camera.proj * camera.view * currentTransform * vec4(inPos, 1.0);
 }

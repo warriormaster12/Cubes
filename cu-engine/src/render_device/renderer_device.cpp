@@ -566,18 +566,19 @@ struct BindingHash {
   size_t operator()(const VkDescriptorSetLayoutBinding &binding) const {
     size_t hash = std::hash<uint32_t>{}(binding.binding) ^
                   std::hash<uint32_t>{}(binding.descriptorType) ^
-                  std::hash<uint32_t>{}(binding.descriptorCount);
+                  std::hash<uint32_t>{}(binding.descriptorCount) ^
+                  std::hash<uint32_t>{}(binding.stageFlags);
     return hash;
   }
 };
 
-// Equality function for VkDescriptorSetLayoutBinding
 struct BindingEqual {
   bool operator()(const VkDescriptorSetLayoutBinding &lhs,
                   const VkDescriptorSetLayoutBinding &rhs) const {
     return lhs.binding == rhs.binding &&
            lhs.descriptorType == rhs.descriptorType &&
-           lhs.descriptorCount == rhs.descriptorCount;
+           lhs.descriptorCount == rhs.descriptorCount &&
+           lhs.stageFlags == rhs.stageFlags;
   }
 };
 
@@ -750,7 +751,13 @@ const PipelineLayoutInfo LayoutAllocator::generate_pipeline_info(
       // Merge stages if the layout already exists
       if (unique_bindings.find(refl_set.set) != unique_bindings.end()) {
         for (auto &[hash, binding] : bindings) {
-          unique_bindings[refl_set.set][hash].stageFlags |= binding.stageFlags;
+          if (unique_bindings[refl_set.set].find(hash) !=
+              unique_bindings[refl_set.set].end()) {
+            unique_bindings[refl_set.set][hash].stageFlags |=
+                binding.stageFlags;
+          } else {
+            unique_bindings[refl_set.set][hash] = binding;
+          }
         }
       } else {
         // Store unique bindings

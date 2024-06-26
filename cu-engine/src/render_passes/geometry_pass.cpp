@@ -6,6 +6,8 @@
 #include <cmath>
 
 #include <vector>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <gtx/transform.hpp>
 
 Texture color_texture;
 Texture depth_texture;
@@ -13,6 +15,7 @@ RenderPipeline triangle_pipeline;
 Buffer test_buffer;
 Buffer test_vertex_buffer;
 Buffer test_index_buffer;
+Buffer test_transform_buffer;
 
 struct Vertex {
   glm::vec3 position;
@@ -162,10 +165,17 @@ void GeometryPass::init() {
   }
   {
     // set 1
+    test_transform_buffer = device->create_buffer(
+        sizeof(glm::mat4) * 1000, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VMA_MEMORY_USAGE_CPU_TO_GPU);
     test_buffer = device->create_buffer(sizeof(float) * 4,
                                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VMA_MEMORY_USAGE_CPU_TO_GPU);
-    geometry_descriptor_writer.write_buffer(0, test_buffer, 0,
+    geometry_descriptor_writer.write_buffer(0, test_transform_buffer, 0,
+                                            sizeof(glm::mat4) * 1000,
+                                            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    geometry_descriptor_writer.write_buffer(1, test_buffer, 0,
                                             sizeof(float) * 4,
                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
@@ -181,8 +191,25 @@ void GeometryPass::update() {
     return;
   }
   frame_number++;
+
+  glm::mat4 transforms[7];
+  glm::vec3 positions[7] = {glm::vec3(0.0, 0, 0.0), glm::vec3(0, 0, 3),
+                            glm::vec3(0, 0, -3),    glm::vec3(3, 0, 0),
+                            glm::vec3(-3, 0, 0),    glm::vec3(0, -3, 0),
+                            glm::vec3(0, 3, 0)};
+  for (int i = 0; i < 7; ++i) {
+    transforms[i] =
+        glm::translate(glm::mat4(1.0f), positions[i]) *
+
+        glm::rotate(glm::mat4(1.0f), glm::radians(90.0f) * frame_number / 60.f,
+                    glm::vec3(0.0f, 0.0f, 1.0f)) *
+        glm::scale(glm::vec3(1.0, 1.0, 1.0));
+  }
+
   float color[4] = {std::sin(frame_number / 60.f), 0.0f,
                     std::cos(frame_number / 60.f), 1.0f};
+  device->write_buffer(transforms, sizeof(glm::mat4) * 7,
+                       test_transform_buffer);
   device->write_buffer(color, sizeof(float) * 4, test_buffer);
 
   CuRenderAttachmentBuilder builder;
@@ -195,7 +222,7 @@ void GeometryPass::update() {
   device->bind_descriptor(triangle_pipeline, 1);
   device->bind_vertex_buffer(0, 1, {test_vertex_buffer}, {0});
   device->bind_index_buffer(test_index_buffer, 0);
-  device->draw_indexed(static_cast<uint16_t>(indices.size()), 1, 0, 0, 0);
+  device->draw_indexed(static_cast<uint16_t>(indices.size()), 7, 0, 0, 0);
   device->submit_image(color_texture);
 }
 
@@ -206,6 +233,7 @@ void GeometryPass::clear() {
   device->clear_buffer(test_buffer);
   device->clear_buffer(test_vertex_buffer);
   device->clear_buffer(test_index_buffer);
+  device->clear_buffer(test_transform_buffer);
   device->clear_texture(color_texture);
   device->clear_texture(depth_texture);
   triangle_pipeline.clear(device->get_raw_device());
