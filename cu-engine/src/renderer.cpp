@@ -1,6 +1,7 @@
 #include "renderer.h"
 
 #include "camera.h"
+#include "item.h"
 #include "logger.h"
 #include "render_device/render_device.h"
 #include "render_passes/render_pass_base.h"
@@ -51,8 +52,13 @@ void CuRenderer::clear() {
     render_passes[i]->clear();
   }
   CameraManager *camera_manager = CameraManager::get_singleton();
+  CuItemManager *item_manager = CuItemManager::get_singleton();
   if (camera_manager) {
     camera_manager->clear();
+  }
+
+  if (item_manager) {
+    item_manager->clear_renderable_items();
   }
   device.clear();
 }

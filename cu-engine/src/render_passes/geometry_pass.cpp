@@ -1,5 +1,6 @@
 #include "geometry_pass.h"
 #include "camera.h"
+#include "item.h"
 #include "render_device/render_device.h"
 #include "shader_compiler.h"
 #include <array>
@@ -13,62 +14,7 @@ Texture color_texture;
 Texture depth_texture;
 RenderPipeline triangle_pipeline;
 Buffer test_buffer;
-Buffer test_vertex_buffer;
-Buffer test_index_buffer;
-Buffer test_transform_buffer;
-
-struct Vertex {
-  glm::vec3 position;
-  glm::vec3 normals;
-};
-
-std::vector<Vertex> vertices = {
-    // Front face
-    {{-1.0f, -1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}}, // 0
-    {{1.0f, -1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},  // 1
-    {{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},   // 2
-    {{-1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},  // 3
-    // Back face
-    {{-1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}}, // 4
-    {{1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},  // 5
-    {{1.0f, 1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},   // 6
-    {{-1.0f, 1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},  // 7
-    // Top face
-    {{-1.0f, 1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}}, // 7
-    {{1.0f, 1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},  // 6
-    {{1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 0.0f}},   // 2
-    {{-1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 0.0f}},  // 3
-    // Bottom face
-    {{-1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}}, // 4
-    {{1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}},  // 5
-    {{1.0f, -1.0f, 1.0f}, {0.0f, -1.0f, 0.0f}},   // 1
-    {{-1.0f, -1.0f, 1.0f}, {0.0f, -1.0f, 0.0f}},  // 0
-    // Right face
-    {{1.0f, -1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}}, // 5
-    {{1.0f, 1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},  // 6
-    {{1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 0.0f}},   // 2
-    {{1.0f, -1.0f, 1.0f}, {1.0f, 0.0f, 0.0f}},  // 1
-    // Left face
-    {{-1.0f, -1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}}, // 4
-    {{-1.0f, 1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}},  // 7
-    {{-1.0f, 1.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},   // 3
-    {{-1.0f, -1.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},  // 0
-};
-
-// Define the indices for the 12 triangles that make up the cube
-std::vector<uint16_t> indices = {
-    // Front face
-    0, 1, 2, 2, 3, 0,
-    // Back face
-    4, 5, 6, 6, 7, 4,
-    // Top face
-    8, 9, 10, 10, 11, 8,
-    // Bottom face
-    12, 13, 14, 14, 15, 12,
-    // Right face
-    16, 17, 18, 18, 19, 16,
-    // Left face
-    20, 21, 22, 22, 23, 20};
+Buffer transform_buffer;
 
 DescriptorWriter geometry_descriptor_writer = {};
 
@@ -108,48 +54,6 @@ void GeometryPass::init() {
     }
   }
 
-  // Create and allocate vertex buffer
-  {
-    test_vertex_buffer = device->create_buffer(
-        sizeof(Vertex) * vertices.size(),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VMA_MEMORY_USAGE_GPU_ONLY);
-
-    Buffer staging_buffer = device->create_buffer(
-        sizeof(Vertex) * vertices.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VMA_MEMORY_USAGE_CPU_ONLY);
-
-    device->write_buffer(vertices.data(), sizeof(Vertex) * vertices.size(),
-                         staging_buffer);
-    device->immediate_submit([&]() {
-      device->copy_buffer(staging_buffer, test_vertex_buffer,
-                          sizeof(Vertex) * vertices.size(), 0, 0);
-    });
-
-    device->clear_buffer(staging_buffer);
-  }
-
-  // Create and allocate index buffer
-  {
-    test_index_buffer = device->create_buffer(
-        sizeof(uint16_t) * indices.size(),
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VMA_MEMORY_USAGE_GPU_ONLY);
-
-    Buffer staging_buffer = device->create_buffer(
-        sizeof(uint16_t) * indices.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VMA_MEMORY_USAGE_CPU_ONLY);
-
-    device->write_buffer(indices.data(), sizeof(uint16_t) * indices.size(),
-                         staging_buffer);
-    device->immediate_submit([&]() {
-      device->copy_buffer(staging_buffer, test_index_buffer,
-                          sizeof(uint16_t) * indices.size(), 0, 0);
-    });
-
-    device->clear_buffer(staging_buffer);
-  }
-
   triangle_pipeline = device->create_render_pipeline(
       shader_infos, VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL, {color_texture},
       depth_texture.format);
@@ -165,13 +69,13 @@ void GeometryPass::init() {
   }
   {
     // set 1
-    test_transform_buffer = device->create_buffer(
-        sizeof(glm::mat4) * 1000, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        VMA_MEMORY_USAGE_CPU_TO_GPU);
+    transform_buffer = device->create_buffer(sizeof(glm::mat4) * 1000,
+                                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                             VMA_MEMORY_USAGE_CPU_TO_GPU);
     test_buffer = device->create_buffer(sizeof(float) * 4,
                                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                         VMA_MEMORY_USAGE_CPU_TO_GPU);
-    geometry_descriptor_writer.write_buffer(0, test_transform_buffer, 0,
+    geometry_descriptor_writer.write_buffer(0, transform_buffer, 0,
                                             sizeof(glm::mat4) * 1000,
                                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
@@ -190,26 +94,35 @@ void GeometryPass::update() {
   if (!device) {
     return;
   }
+  CuItemManager *item_manager = CuItemManager::get_singleton();
   frame_number++;
-
-  glm::mat4 transforms[7];
-  glm::vec3 positions[7] = {glm::vec3(0.0, 0, 0.0), glm::vec3(0, 0, 3),
-                            glm::vec3(0, 0, -3),    glm::vec3(3, 0, 0),
-                            glm::vec3(-3, 0, 0),    glm::vec3(0, -3, 0),
-                            glm::vec3(0, 3, 0)};
-  for (int i = 0; i < 7; ++i) {
-    transforms[i] =
-        glm::translate(glm::mat4(1.0f), positions[i]) *
-
-        glm::rotate(glm::mat4(1.0f), glm::radians(90.0f) * frame_number / 60.f,
-                    glm::vec3(0.0f, 0.0f, 1.0f)) *
-        glm::scale(glm::vec3(1.0, 1.0, 1.0));
-  }
 
   float color[4] = {std::sin(frame_number / 60.f), 0.0f,
                     std::cos(frame_number / 60.f), 1.0f};
-  device->write_buffer(transforms, sizeof(glm::mat4) * 7,
-                       test_transform_buffer);
+  if (item_manager) {
+    std::vector<CuItem *> renderables =
+        item_manager->get_items_by_type(CuItemType::RENDERABLE);
+
+    const int count = renderables.size();
+    bool update_transforms = false;
+    for (int i = 0; i < count; ++i) {
+      if (renderables[i]->get_dirty_state()) {
+        update_transforms = true;
+        break;
+      }
+    }
+
+    std::vector<glm::mat4> transforms = {};
+    transforms.resize(count);
+    if (update_transforms) {
+      for (int i = 0; i < count; ++i) {
+        transforms[i] = renderables[i]->get_transform();
+      }
+
+      device->write_buffer(transforms.data(), sizeof(glm::mat4) * count,
+                           transform_buffer);
+    }
+  }
   device->write_buffer(color, sizeof(float) * 4, test_buffer);
 
   CuRenderAttachmentBuilder builder;
@@ -220,9 +133,9 @@ void GeometryPass::update() {
   device->bind_pipeline(triangle_pipeline);
   device->bind_descriptor(triangle_pipeline, 0);
   device->bind_descriptor(triangle_pipeline, 1);
-  device->bind_vertex_buffer(0, 1, {test_vertex_buffer}, {0});
-  device->bind_index_buffer(test_index_buffer, 0);
-  device->draw_indexed(static_cast<uint16_t>(indices.size()), 7, 0, 0, 0);
+  if (item_manager) {
+    item_manager->draw_items();
+  }
   device->submit_image(color_texture);
 }
 
@@ -231,9 +144,7 @@ void GeometryPass::clear() {
     return;
   }
   device->clear_buffer(test_buffer);
-  device->clear_buffer(test_vertex_buffer);
-  device->clear_buffer(test_index_buffer);
-  device->clear_buffer(test_transform_buffer);
+  device->clear_buffer(transform_buffer);
   device->clear_texture(color_texture);
   device->clear_texture(depth_texture);
   triangle_pipeline.clear(device->get_raw_device());
