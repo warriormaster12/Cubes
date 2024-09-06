@@ -18,6 +18,11 @@ void CuItem::set_scale(const glm::vec3 &p_scale) {
   is_dirty = true;
 };
 
+void CuItem::add_child(CuItem p_item) {
+  p_item.parent = this;
+  children.push_back(std::move(p_item));
+}
+
 void CuItem::update(double p_delta) {
   if (is_dirty) {
     const float c3 = glm::cos(rotation.z);
@@ -45,8 +50,15 @@ void CuItem::update(double p_delta) {
                               0.0f,
                           },
                           {position.x, position.y, position.z, 1.0f}};
+
+    if (parent) {
+      transform = parent->transform * transform;
+    }
   }
 
+  for (int i = 0; i < children.size(); ++i) {
+    children[i].update(p_delta);
+  }
   // we reset the flag later for renderables
   if (!(item_type & CuItemType::RENDERABLE))
     is_dirty = false;
@@ -55,95 +67,115 @@ void CuItem::update(double p_delta) {
 CuItemManager *CuItemManager::singleton = nullptr;
 
 CuItemManager::CuItemManager() { singleton = this; }
+CuItemManager::~CuItemManager() { singleton = nullptr; }
 
-void CuItemManager::add_item(CuItem item) {
+void CuItemManager::add_root(std::shared_ptr<CuItem> p_item) {
+  if (root) {
+    return;
+  }
+  CuRenderDevice *device = CuRenderDevice::get_singleton();
+  if (device) {
+    {
+      // create vertex buffer
+      {
+        cube_vertex_buffer =
+            device->create_buffer(sizeof(Vertex) * cube_vertices.size(),
+                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                  VMA_MEMORY_USAGE_GPU_ONLY);
 
-  if ((item.get_type() & CuItemType::RENDERABLE)) {
-    if (renderables_count == 0) {
-      CuRenderDevice *device = CuRenderDevice::get_singleton();
-      if (device) {
-        {
-          // create vertex buffer
-          {
-            cube_vertex_buffer =
-                device->create_buffer(sizeof(Vertex) * cube_vertices.size(),
-                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                      VMA_MEMORY_USAGE_GPU_ONLY);
+        Buffer staging_buffer = device->create_buffer(
+            sizeof(Vertex) * cube_vertices.size(),
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
 
-            Buffer staging_buffer = device->create_buffer(
-                sizeof(Vertex) * cube_vertices.size(),
-                VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+        device->write_buffer(cube_vertices.data(),
+                             sizeof(Vertex) * cube_vertices.size(),
+                             staging_buffer);
+        device->immediate_submit([&]() {
+          device->copy_buffer(staging_buffer, cube_vertex_buffer,
+                              sizeof(Vertex) * cube_vertices.size(), 0, 0);
+        });
 
-            device->write_buffer(cube_vertices.data(),
-                                 sizeof(Vertex) * cube_vertices.size(),
-                                 staging_buffer);
-            device->immediate_submit([&]() {
-              device->copy_buffer(staging_buffer, cube_vertex_buffer,
-                                  sizeof(Vertex) * cube_vertices.size(), 0, 0);
-            });
-
-            device->clear_buffer(staging_buffer);
-          }
-        }
-        // create index buffer
-        {
-          cube_index_buffer =
-              device->create_buffer(sizeof(uint16_t) * cube_indices.size(),
-                                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                    VMA_MEMORY_USAGE_GPU_ONLY);
-
-          Buffer staging_buffer = device->create_buffer(
-              sizeof(uint16_t) * cube_indices.size(),
-              VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-
-          device->write_buffer(cube_indices.data(),
-                               sizeof(uint16_t) * cube_indices.size(),
-                               staging_buffer);
-          device->immediate_submit([&]() {
-            device->copy_buffer(staging_buffer, cube_index_buffer,
-                                sizeof(uint16_t) * cube_indices.size(), 0, 0);
-          });
-
-          device->clear_buffer(staging_buffer);
-        }
+        device->clear_buffer(staging_buffer);
       }
     }
-    renderables_count += 1;
+    // create index buffer
+    {
+      cube_index_buffer = device->create_buffer(
+          sizeof(uint16_t) * cube_indices.size(),
+          VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          VMA_MEMORY_USAGE_GPU_ONLY);
+
+      Buffer staging_buffer = device->create_buffer(
+          sizeof(uint16_t) * cube_indices.size(),
+          VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+
+      device->write_buffer(cube_indices.data(),
+                           sizeof(uint16_t) * cube_indices.size(),
+                           staging_buffer);
+      device->immediate_submit([&]() {
+        device->copy_buffer(staging_buffer, cube_index_buffer,
+                            sizeof(uint16_t) * cube_indices.size(), 0, 0);
+      });
+
+      device->clear_buffer(staging_buffer);
+    }
   }
 
-  items.push_back(item);
+  root = p_item;
 }
 
 CuItemManager *CuItemManager::get_singleton() { return singleton; }
 
-CuItem *CuItemManager::get_item(const std::string &id) {
-  for (int i = 0; i < items.size(); ++i) {
-    if (items[i].get_id() == id) {
-      return &items[i];
+CuItem *find_item_in_node(CuItem *current_item, const std::string &p_id) {
+  CuItem *found_item = nullptr;
+  for (int i = 0; i < current_item->get_child_count(); ++i) {
+    CuItem *item = current_item->get_child(i);
+    if (!item) {
+      continue;
+    }
+    if (item->get_id() == p_id) {
+      return item;
+    } else {
+      found_item = find_item_in_node(item, p_id);
+      if (found_item) {
+        break;
+      }
     }
   }
+  return found_item;
+}
 
-  return nullptr;
+std::vector<CuItem *> find_items_of_type_in_node(CuItem *current_item,
+                                                 const CuItemType &p_type) {
+  std::vector<CuItem *> found_items;
+  for (int i = 0; i < current_item->get_child_count(); ++i) {
+    CuItem *item = current_item->get_child(i);
+    if (item->get_type() == p_type) {
+      found_items.push_back(item);
+    }
+    std::vector<CuItem *> temp_list = find_items_of_type_in_node(item, p_type);
+    found_items.insert(found_items.end(), temp_list.begin(), temp_list.end());
+  }
+  return found_items;
+}
+
+CuItem *CuItemManager::get_item(const std::string &p_id) {
+  if (!root) {
+    return nullptr;
+  } else if (root && root->get_id() == p_id) {
+    return root.get();
+  }
+
+  return find_item_in_node(root.get(), p_id);
 }
 
 std::vector<CuItem *> CuItemManager::get_items_by_type(CuItemType p_type) {
-  std::vector<CuItem *> out_items;
-  for (int i = 0; i < items.size(); ++i) {
-    if (items[i].get_type() & p_type) {
-      out_items.push_back(&items[i]);
-    }
-  }
-  return out_items;
+
+  return find_items_of_type_in_node(root.get(), p_type);
 }
 
-void CuItemManager::update_items(double p_delta) {
-  for (int i = 0; i < items.size(); ++i) {
-    CuItem &item = items[i];
-    item.update(p_delta);
-  }
-}
+void CuItemManager::update_items(double p_delta) { root->update(p_delta); }
 
 void CuItemManager::draw_items() {
   CuRenderDevice *device = CuRenderDevice::get_singleton();

@@ -40,6 +40,17 @@ public:
 
   void update(double p_delta);
 
+  void add_child(CuItem p_item);
+  std::vector<CuItem> &get_children() { return children; }
+  CuItem *get_child(const int idx) {
+    if (idx < 0 || idx >= children.size()) {
+      return nullptr;
+    }
+    return &children[idx];
+  }
+
+  size_t get_child_count() const { return children.size(); }
+
 private:
   std::string id;
   glm::vec3 position = glm::vec3(0.0);
@@ -48,13 +59,16 @@ private:
   glm::mat4 transform;
   CuItemType item_type = NONE;
   bool is_dirty = true;
+  CuItem *parent = nullptr;
+  std::vector<CuItem> children;
 };
 
 class CuItemManager {
 public:
   CuItemManager();
-  void add_item(CuItem item);
-  CuItem *get_item(const std::string &id);
+  ~CuItemManager();
+  void add_root(std::shared_ptr<CuItem> p_item);
+  CuItem *get_item(const std::string &p_id);
   std::vector<CuItem *> get_items_by_type(CuItemType p_type);
 
   void update_items(double p_delta);
@@ -66,12 +80,11 @@ public:
   static CuItemManager *get_singleton();
 
 private:
-  std::vector<CuItem> items;
+  std::shared_ptr<CuItem> root;
   static CuItemManager *singleton;
   Buffer cube_vertex_buffer;
   Buffer cube_index_buffer;
   Buffer transforms_buffer;
-  int renderables_count = 0;
 
   std::vector<Vertex> cube_vertices = {
       // Front face
