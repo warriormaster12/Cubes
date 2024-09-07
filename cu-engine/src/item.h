@@ -1,11 +1,17 @@
 #pragma once
+#include "physics-server.h"
 #include "render_device/utils.h"
 #include <string>
 #include <vector>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <gtx/transform.hpp>
 
-enum CuItemType { NONE, RENDERABLE, PHYSICS };
+enum CuItemType {
+  NONE,
+  RENDERABLE = 1 << 0,
+  STATIC_BODY = 1 << 1,
+  RIGID_BODY = 1 << 2
+};
 
 struct Vertex {
   glm::vec3 position;
@@ -14,10 +20,8 @@ struct Vertex {
 
 class CuItem {
 public:
-  CuItem(const std::string p_id, const CuItemType p_item_type) {
-    id = p_id;
-    item_type = p_item_type;
-  }
+  CuItem(const std::string p_id, const int p_item_type);
+  ~CuItem();
 
   void set_id(const std::string p_id);
   std::string get_id() const { return id; }
@@ -58,9 +62,12 @@ private:
   glm::vec3 scale = glm::vec3(1.0);
   glm::mat4 transform;
   CuItemType item_type = NONE;
-  bool is_dirty = true;
   CuItem *parent = nullptr;
   std::vector<CuItem> children;
+  btCollisionShape *shape = nullptr;
+  btCollisionObject *collision_object = nullptr;
+  btRigidBody *body = nullptr;
+  bool is_dirty = true;
 };
 
 class CuItemManager {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera.h"
+#include "physics-server.h"
 #include "renderer.h"
 #include "window.h"
 
@@ -16,5 +17,6 @@ public:
 private:
   bool ready = false;
   CuRenderer renderer;
+  CuPhysicsServer physics;
   CameraManager camera_manager;
 };
