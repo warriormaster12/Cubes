@@ -18,10 +18,13 @@ target_include_directories(cu-engine
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/spirv_reflect
 )
 
+set(BUILD_BULLET3 ON CACHE BOOL "Build Bullet3 library")
+
 add_subdirectory(libs/glfw EXCLUDE_FROM_ALL)
 add_subdirectory(libs/vk-bootstrap EXCLUDE_FROM_ALL)
 add_subdirectory(libs/fmt EXCLUDE_FROM_ALL)
 add_subdirectory(libs/glslang EXCLUDE_FROM_ALL)
+add_subdirectory(libs/bullet3 EXCLUDE_FROM_ALL BUILD_BULLET3)
 
 target_link_libraries(
     cu-engine PUBLIC 
@@ -31,4 +34,5 @@ target_link_libraries(
     glslang
     SPIRV 
     glslang-default-resource-limits
+    libbullet3
 )

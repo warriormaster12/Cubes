@@ -23,7 +23,7 @@ void CuItem::add_child(CuItem p_item) {
   children.push_back(std::move(p_item));
 }
 
-void CuItem::update(double p_delta) {
+void CuItem::update() {
   if (is_dirty) {
     const float c3 = glm::cos(rotation.z);
     const float s3 = glm::sin(rotation.z);
@@ -57,7 +57,7 @@ void CuItem::update(double p_delta) {
   }
 
   for (int i = 0; i < children.size(); ++i) {
-    children[i].update(p_delta);
+    children[i].update();
   }
   // we reset the flag later for renderables
   if (!(item_type & CuItemType::RENDERABLE))
@@ -175,7 +175,7 @@ std::vector<CuItem *> CuItemManager::get_items_by_type(CuItemType p_type) {
   return find_items_of_type_in_node(root.get(), p_type);
 }
 
-void CuItemManager::update_items(double p_delta) { root->update(p_delta); }
+void CuItemManager::update_items() { root->update(); }
 
 void CuItemManager::draw_items() {
   CuRenderDevice *device = CuRenderDevice::get_singleton();

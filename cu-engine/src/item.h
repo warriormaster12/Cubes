@@ -38,7 +38,7 @@ public:
   void reset_dirty_state() { is_dirty = false; }
   bool get_dirty_state() const { return is_dirty; }
 
-  void update(double p_delta);
+  void update();
 
   void add_child(CuItem p_item);
   std::vector<CuItem> &get_children() { return children; }
@@ -71,7 +71,7 @@ public:
   CuItem *get_item(const std::string &p_id);
   std::vector<CuItem *> get_items_by_type(CuItemType p_type);
 
-  void update_items(double p_delta);
+  void update_items();
 
   void draw_items();
 
