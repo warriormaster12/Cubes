@@ -5,6 +5,9 @@
 #include <thread>
 #include <vector>
 
+/**
+This class handles creation and removal of physics resources
+*/
 class CuPhysicsServer {
 public:
   CuPhysicsServer();
@@ -19,6 +22,7 @@ public:
                                  btCollisionShape *p_shape);
   void remove_rigid_body(btRigidBody *p_body);
   void remove_collision_shape(const btCollisionShape *p_shape);
+  void remove_static_body(btCollisionObject *p_object);
 
   void update_physics(double p_delta);
 

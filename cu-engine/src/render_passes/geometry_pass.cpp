@@ -98,7 +98,7 @@ void GeometryPass::update() {
 
   float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   if (item_manager) {
-    std::vector<CuItem *> renderables =
+    std::vector<std::shared_ptr<CuItem>> renderables =
         item_manager->get_items_by_type(CuItemType::RENDERABLE);
 
     const int count = renderables.size();

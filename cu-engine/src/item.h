@@ -6,6 +6,9 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <gtx/transform.hpp>
 
+/**
+Bitflags for CuItem
+ */
 enum CuItemType {
   NONE,
   RENDERABLE = 1 << 0,
@@ -18,25 +21,56 @@ struct Vertex {
   glm::vec3 normals;
 };
 
+/**
+Similar in the functionality of a Node.
+Handles things like rendering, physics etc.
+*/
 class CuItem {
 public:
   CuItem(const std::string p_id, const int p_item_type);
-  ~CuItem();
 
+  /**
+   sets an id of a CuItem
+   */
   void set_id(const std::string p_id);
+  /**
+   retuns current id of a CuItem
+   */
   std::string get_id() const { return id; }
 
+  /**
+   sets position in local-space.
+   */
   void set_position(const glm::vec3 &p_position);
+  /**
+   retuns current position in local-space.
+   */
   glm::vec3 get_position() const { return position; }
 
+  /**
+   sets rotation in local-space.
+   */
   void set_rotation(const glm::vec3 &p_rotation);
+  /**
+   retuns rotation in local-space.
+   */
   glm::vec3 get_rotation() const { return rotation; }
 
+  /**
+   sets scale in local-space.
+   */
   void set_scale(const glm::vec3 &p_scale);
+  /**
+   retuns current scale in local-space.
+   */
   glm::vec3 get_scale() const { return scale; }
-
+  /**
+   retuns CuItem's model matrix.
+   */
   glm::mat4 get_transform() const { return transform; }
-
+  /**
+   retuns CuItem's CuItemTypes.
+   */
   CuItemType get_type() const { return item_type; }
 
   void reset_dirty_state() { is_dirty = false; }
@@ -44,13 +78,14 @@ public:
 
   void update();
 
-  void add_child(CuItem p_item);
-  std::vector<CuItem> &get_children() { return children; }
-  CuItem *get_child(const int idx) {
+  void add_child(std::shared_ptr<CuItem> p_item);
+  void queue_free();
+  std::vector<std::shared_ptr<CuItem>> &get_children() { return children; }
+  std::shared_ptr<CuItem> get_child(const int idx) {
     if (idx < 0 || idx >= children.size()) {
       return nullptr;
     }
-    return &children[idx];
+    return children[idx];
   }
 
   size_t get_child_count() const { return children.size(); }
@@ -64,26 +99,31 @@ private:
   btTransform bt_transform;
   CuItemType item_type = NONE;
   CuItem *parent = nullptr;
-  std::vector<CuItem> children;
+  std::vector<std::shared_ptr<CuItem>> children;
   btCollisionShape *shape = nullptr;
   btCollisionObject *collision_object = nullptr;
   btRigidBody *body = nullptr;
   bool is_dirty = true;
 };
 
+/**
+Manages all living items in the scene.
+ */
 class CuItemManager {
 public:
   CuItemManager();
-  ~CuItemManager();
-  void add_root(std::shared_ptr<CuItem> p_item);
-  CuItem *get_item(const std::string &p_id);
-  std::vector<CuItem *> get_items_by_type(CuItemType p_type);
+  void add_root(std::unique_ptr<CuItem> p_item);
+  std::shared_ptr<CuItem> get_root() { return root; };
+  std::shared_ptr<CuItem> get_item(const std::string &p_id);
+  std::vector<std::shared_ptr<CuItem>> get_items_by_type(CuItemType p_type);
 
   void update_items();
 
   void draw_items();
 
-  void clear_renderable_items();
+  void clear_renderable_resources();
+
+  void clear_items();
 
   static CuItemManager *get_singleton();
 

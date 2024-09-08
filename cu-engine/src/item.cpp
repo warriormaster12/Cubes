@@ -23,13 +23,6 @@ CuItem::CuItem(const std::string p_id, const int p_item_type) {
   }
 }
 
-CuItem::~CuItem() {
-  CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
-  // if (physics && shape) {
-  //   physics->remove_collision_shape(shape);
-  // }
-}
-
 void CuItem::set_id(const std::string p_id) { id = p_id; }
 
 void CuItem::set_position(const glm::vec3 &p_position) {
@@ -37,6 +30,11 @@ void CuItem::set_position(const glm::vec3 &p_position) {
   if (body) {
     bt_transform.setOrigin(btVector3(position.x, position.y, position.z));
     body->setWorldTransform(bt_transform);
+  }
+
+  if (collision_object) {
+    bt_transform.setOrigin(btVector3(position.x, position.y, position.z));
+    collision_object->setWorldTransform(bt_transform);
   }
   is_dirty = true;
 };
@@ -65,9 +63,36 @@ void CuItem::set_scale(const glm::vec3 &p_scale) {
   is_dirty = true;
 };
 
-void CuItem::add_child(CuItem p_item) {
-  p_item.parent = this;
-  children.push_back(std::move(p_item));
+void CuItem::add_child(std::shared_ptr<CuItem> p_item) {
+  p_item->parent = this;
+  children.push_back(p_item);
+}
+
+void CuItem::queue_free() {
+  children.clear();
+  if (parent) {
+    for (int i = 0; i < parent->children.size(); ++i) {
+      if (id == parent->children[i]->get_id()) {
+        parent->children.erase(parent->children.begin() + i);
+        break;
+      }
+    }
+  }
+  CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
+  if (physics) {
+    if (shape) {
+      physics->remove_collision_shape(shape);
+    }
+
+    if (body) {
+      physics->remove_rigid_body(body);
+    }
+
+    if (collision_object) {
+      physics->remove_static_body(collision_object);
+    }
+  }
+  delete this;
 }
 
 void CuItem::update() {
@@ -113,7 +138,7 @@ void CuItem::update() {
   }
 
   for (int i = 0; i < children.size(); ++i) {
-    children[i].update();
+    children[i]->update();
   }
   // we reset the flag later for renderables
   if (!((item_type & CuItemType::RENDERABLE) == CuItemType::RENDERABLE))
@@ -123,9 +148,8 @@ void CuItem::update() {
 CuItemManager *CuItemManager::singleton = nullptr;
 
 CuItemManager::CuItemManager() { singleton = this; }
-CuItemManager::~CuItemManager() { singleton = nullptr; }
 
-void CuItemManager::add_root(std::shared_ptr<CuItem> p_item) {
+void CuItemManager::add_root(std::unique_ptr<CuItem> p_item) {
   if (root) {
     return;
   }
@@ -178,15 +202,16 @@ void CuItemManager::add_root(std::shared_ptr<CuItem> p_item) {
     }
   }
 
-  root = p_item;
+  root = std::move(p_item);
 }
 
 CuItemManager *CuItemManager::get_singleton() { return singleton; }
 
-CuItem *find_item_in_node(CuItem *current_item, const std::string &p_id) {
-  CuItem *found_item = nullptr;
+std::shared_ptr<CuItem> find_item_in_node(std::shared_ptr<CuItem> current_item,
+                                          const std::string &p_id) {
+  std::shared_ptr<CuItem> found_item = nullptr;
   for (int i = 0; i < current_item->get_child_count(); ++i) {
-    CuItem *item = current_item->get_child(i);
+    std::shared_ptr<CuItem> item = current_item->get_child(i);
     if (!item) {
       continue;
     }
@@ -202,33 +227,30 @@ CuItem *find_item_in_node(CuItem *current_item, const std::string &p_id) {
   return found_item;
 }
 
-std::vector<CuItem *> find_items_of_type_in_node(CuItem *current_item,
-                                                 const CuItemType &p_type) {
-  std::vector<CuItem *> found_items;
+std::vector<std::shared_ptr<CuItem>>
+find_items_of_type_in_node(std::shared_ptr<CuItem> current_item,
+                           const CuItemType &p_type) {
+  std::vector<std::shared_ptr<CuItem>> found_items;
   for (int i = 0; i < current_item->get_child_count(); ++i) {
-    CuItem *item = current_item->get_child(i);
+    std::shared_ptr<CuItem> item = current_item->get_child(i);
     if ((item->get_type() & p_type) == p_type) {
       found_items.push_back(item);
     }
-    std::vector<CuItem *> temp_list = find_items_of_type_in_node(item, p_type);
+    std::vector<std::shared_ptr<CuItem>> temp_list =
+        find_items_of_type_in_node(item, p_type);
     found_items.insert(found_items.end(), temp_list.begin(), temp_list.end());
   }
   return found_items;
 }
 
-CuItem *CuItemManager::get_item(const std::string &p_id) {
-  if (!root) {
-    return nullptr;
-  } else if (root && root->get_id() == p_id) {
-    return root.get();
-  }
-
-  return find_item_in_node(root.get(), p_id);
+std::shared_ptr<CuItem> CuItemManager::get_item(const std::string &p_id) {
+  return find_item_in_node(root, p_id);
 }
 
-std::vector<CuItem *> CuItemManager::get_items_by_type(CuItemType p_type) {
+std::vector<std::shared_ptr<CuItem>>
+CuItemManager::get_items_by_type(CuItemType p_type) {
 
-  return find_items_of_type_in_node(root.get(), p_type);
+  return find_items_of_type_in_node(root, p_type);
 }
 
 void CuItemManager::update_items() { root->update(); }
@@ -238,7 +260,8 @@ void CuItemManager::draw_items() {
   if (!device || cube_vertex_buffer.buffer == VK_NULL_HANDLE) {
     return;
   }
-  std::vector<CuItem *> renderables = get_items_by_type(CuItemType::RENDERABLE);
+  std::vector<std::shared_ptr<CuItem>> renderables =
+      get_items_by_type(CuItemType::RENDERABLE);
   const int instance_count = renderables.size();
 
   device->bind_vertex_buffer(0, 1, {cube_vertex_buffer}, {0});
@@ -255,11 +278,17 @@ void CuItemManager::draw_items() {
   }
 }
 
-void CuItemManager::clear_renderable_items() {
+void CuItemManager::clear_renderable_resources() {
   CuRenderDevice *device = CuRenderDevice::get_singleton();
   if (!device) {
     return;
   }
   device->clear_buffer(cube_vertex_buffer);
   device->clear_buffer(cube_index_buffer);
+}
+
+void CuItemManager::clear_items() {
+  if (root) {
+    root->queue_free();
+  }
 }

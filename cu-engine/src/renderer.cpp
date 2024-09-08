@@ -58,7 +58,7 @@ void CuRenderer::clear() {
   }
 
   if (item_manager) {
-    item_manager->clear_renderable_items();
+    item_manager->clear_renderable_resources();
   }
   device.clear();
 }

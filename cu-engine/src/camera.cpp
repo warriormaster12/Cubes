@@ -34,7 +34,7 @@ void Camera::update() {
 
     gpu_data.projection = glm::perspective(fov, width / height, znear, zfar);
     gpu_data.view =
-        glm::lookAt(glm::vec3(5.0f, 5.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::lookAt(glm::vec3(8.0f, 8.0f, 8.0f), glm::vec3(0.0f, 0.0f, 0.0f),
                     glm::vec3(0.0f, 0.0f, 1.0f));
     gpu_data.projection[1][1] *= -1;
     dirty = true;

@@ -90,6 +90,11 @@ void CuPhysicsServer::remove_collision_shape(const btCollisionShape *p_shape) {
   }
 }
 
+void CuPhysicsServer::remove_static_body(btCollisionObject *p_object) {
+  dynamic_world->removeCollisionObject(p_object);
+  delete p_object;
+}
+
 void step_simulation(btDiscreteDynamicsWorld *p_dynamic_world, double p_delta) {
   CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
   if (!physics) {

@@ -135,7 +135,10 @@ public:
 private:
   std::vector<VkDescriptorSetLayout> descriptor_layouts;
 };
-
+/**
+an Abstraction layer that handles calls to APIs such as Vulkan, DX12 etc.
+Currently only Vulkan supported.
+ */
 class CuRenderDevice {
 public:
   CuRenderDevice();
