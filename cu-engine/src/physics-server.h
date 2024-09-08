@@ -2,6 +2,7 @@
 
 #include "btBulletDynamicsCommon.h"
 #include <glm.hpp>
+#include <thread>
 #include <vector>
 
 class CuPhysicsServer {
@@ -21,6 +22,8 @@ public:
 
   void update_physics(double p_delta);
 
+  std::mutex &get_physics_mutex() { return physics_mutex; }
+
 private:
   static CuPhysicsServer *singleton;
 
@@ -30,4 +33,6 @@ private:
   btSequentialImpulseConstraintSolver *solver = nullptr;
   btDiscreteDynamicsWorld *dynamic_world = nullptr;
   std::vector<btCollisionShape *> collision_shapes;
+  std::thread physics_thread;
+  std::mutex physics_mutex;
 };

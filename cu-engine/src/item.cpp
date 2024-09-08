@@ -10,15 +10,15 @@ CuItem::CuItem(const std::string p_id, const int p_item_type) {
   if (physics) {
     if ((item_type & CuItemType::STATIC_BODY) == CuItemType::STATIC_BODY ||
         (item_type & CuItemType::RIGID_BODY) == CuItemType::RIGID_BODY) {
-      shape = physics->create_box_shape(
-          glm::vec3(scale.x * 0.5, scale.y * 0.5, scale.z * 0.5));
+      shape = physics->create_box_shape(glm::vec3(scale.x, scale.y, scale.z));
     }
 
     if ((item_type & CuItemType::STATIC_BODY) == CuItemType::STATIC_BODY) {
-      btTransform transform;
-      transform.setIdentity();
-      transform.setOrigin(btVector3(0, 0, 0));
-      collision_object = physics->create_static_body(transform, shape);
+      bt_transform.setIdentity();
+      collision_object = physics->create_static_body(bt_transform, shape);
+    } else if ((item_type & CuItemType::RIGID_BODY) == CuItemType::RIGID_BODY) {
+      bt_transform.setIdentity();
+      body = physics->create_rigid_body(5.0f, bt_transform, shape);
     }
   }
 }
@@ -34,6 +34,10 @@ void CuItem::set_id(const std::string p_id) { id = p_id; }
 
 void CuItem::set_position(const glm::vec3 &p_position) {
   position = p_position;
+  if (body) {
+    bt_transform.setOrigin(btVector3(position.x, position.y, position.z));
+    body->setWorldTransform(bt_transform);
+  }
   is_dirty = true;
 };
 
@@ -44,6 +48,20 @@ void CuItem::set_rotation(const glm::vec3 &p_rotation) {
 
 void CuItem::set_scale(const glm::vec3 &p_scale) {
   scale = p_scale;
+  if ((item_type & CuItemType::STATIC_BODY) == CuItemType::STATIC_BODY ||
+      (item_type & CuItemType::RIGID_BODY) == CuItemType::RIGID_BODY) {
+    CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
+    if (physics) {
+      switch (shape->getShapeType()) {
+      case BOX_SHAPE_PROXYTYPE:
+        static_cast<btBoxShape *>(shape)->setImplicitShapeDimensions(
+            btVector3(scale.x, scale.y, scale.z));
+        break;
+      default:
+        break;
+      }
+    }
+  }
   is_dirty = true;
 };
 
@@ -53,20 +71,13 @@ void CuItem::add_child(CuItem p_item) {
 }
 
 void CuItem::update() {
-  if (!body && (item_type & CuItemType::RIGID_BODY) == CuItemType::RIGID_BODY) {
-    CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
-    if (physics) {
-      btTransform bt_transfrom;
-      bt_transfrom.setIdentity();
-      bt_transfrom.setOrigin(btVector3(position.x, position.y, position.z));
-      body = physics->create_rigid_body(5.0f, bt_transfrom, shape);
-    }
-  }
-  if (body) {
-    set_position(
+  if (body && !body->wantsSleeping()) {
+    position =
         glm::vec3(position.x + body->getLinearVelocity().getX() * 1 / 60,
                   position.y + body->getLinearVelocity().getY() * 1 / 60,
-                  position.z + body->getLinearVelocity().getZ() * 1 / 60));
+                  position.z + body->getLinearVelocity().getZ() * 1 / 60);
+
+    is_dirty = true;
   }
 
   if (is_dirty) {

@@ -61,6 +61,7 @@ private:
   glm::vec3 rotation = glm::vec3(0.0);
   glm::vec3 scale = glm::vec3(1.0);
   glm::mat4 transform;
+  btTransform bt_transform;
   CuItemType item_type = NONE;
   CuItem *parent = nullptr;
   std::vector<CuItem> children;

@@ -44,7 +44,6 @@ CuPhysicsServer::create_rigid_body(const float p_mass,
                                    const btTransform &p_start_transform,
                                    btCollisionShape *p_shape) {
   btAssert((!p_shape || p_shape->getShapeType() != INVALID_SHAPE_PROXYTPE));
-
   bool is_dynamic = p_mass != 0.f;
 
   btVector3 local_inertia(0, 0, 0);
@@ -91,13 +90,25 @@ void CuPhysicsServer::remove_collision_shape(const btCollisionShape *p_shape) {
   }
 }
 
+void step_simulation(btDiscreteDynamicsWorld *p_dynamic_world, double p_delta) {
+  CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
+  if (!physics) {
+    return;
+  }
+  std::lock_guard<std::mutex> guard(physics->get_physics_mutex());
+  p_dynamic_world->stepSimulation(p_delta);
+}
+
 void CuPhysicsServer::update_physics(double p_delta) {
   if (!dynamic_world) {
     ENGINE_WARN("No dynamic world setup. Can't update physics");
     return;
   }
 
-  dynamic_world->stepSimulation(p_delta);
+  if (physics_thread.joinable()) {
+    physics_thread.join();
+  }
+  physics_thread = std::thread(step_simulation, dynamic_world, p_delta);
 }
 
 CuPhysicsServer::~CuPhysicsServer() {
@@ -120,6 +131,9 @@ CuPhysicsServer::~CuPhysicsServer() {
   for (int i = 0; i < collision_shapes.size(); ++i) {
     btCollisionShape *shape = collision_shapes[i];
     delete shape;
+  }
+  if (physics_thread.joinable()) {
+    physics_thread.join();
   }
   collision_shapes.clear();
   delete dynamic_world;

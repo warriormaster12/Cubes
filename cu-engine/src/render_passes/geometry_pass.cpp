@@ -4,7 +4,6 @@
 #include "render_device/render_device.h"
 #include "shader_compiler.h"
 #include <array>
-#include <cmath>
 
 #include <vector>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -97,8 +96,7 @@ void GeometryPass::update() {
   CuItemManager *item_manager = CuItemManager::get_singleton();
   frame_number++;
 
-  float color[4] = {std::sin(frame_number / 60.f), 0.0f,
-                    std::cos(frame_number / 60.f), 1.0f};
+  float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   if (item_manager) {
     std::vector<CuItem *> renderables =
         item_manager->get_items_by_type(CuItemType::RENDERABLE);

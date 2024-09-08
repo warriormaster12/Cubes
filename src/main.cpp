@@ -5,6 +5,10 @@
 #include <physics-server.h>
 #include <renderer.h>
 
+const int WIDTH = 1;
+const int HEIGHT = 1;
+const int DEPTH = 1;
+
 int main() {
   CuEngine engine = CuEngine("Cubes");
   CuPhysicsServer *physics = CuPhysicsServer::get_singleton();
@@ -15,8 +19,13 @@ int main() {
   root->add_child(CuItem("cube", CuItemType::RENDERABLE));
   root->add_child(
       CuItem("floor", CuItemType::RENDERABLE | CuItemType::STATIC_BODY));
-  root->add_child(
-      CuItem("rigid_cube", CuItemType::RENDERABLE | CuItemType::RIGID_BODY));
+  for (int x = 0; x < 3; ++x) {
+    CuItem rigid_cube = CuItem("rigid_cube, " + std::to_string(x),
+                               CuItemType::RENDERABLE | CuItemType::RIGID_BODY);
+    rigid_cube.set_position(glm::vec3(x - 4, x + 4, x + 8));
+    root->add_child(rigid_cube);
+  }
+
   CuItem *cube = item_manager.get_item("cube");
   cube->add_child(CuItem("cube1", CuItemType::RENDERABLE));
   cube->add_child(CuItem("cube2", CuItemType::RENDERABLE));
@@ -24,11 +33,9 @@ int main() {
   CuItem *cube2 = item_manager.get_item("cube2");
 
   CuItem *floor = item_manager.get_item("floor");
-  CuItem *rigid_cube = item_manager.get_item("rigid_cube");
-  rigid_cube->set_position(glm::vec3(0.0, 0.0, 7.0));
 
   floor->set_scale(glm::vec3(10.0, 10.0, 0.1f));
-  cube->set_position(glm::vec3(0.0, 0.0, 5.0));
+  cube->set_position(glm::vec3(-5.0, -5.0, 5.0));
   cube1->set_position(glm::vec3(3.0, 0.0, 0.0));
   cube2->set_position(glm::vec3(-3.0, 0.0, 0.0));
   float angle = 0.0;
