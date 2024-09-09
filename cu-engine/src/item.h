@@ -25,7 +25,7 @@ struct Vertex {
 Similar in the functionality of a Node.
 Handles things like rendering, physics etc.
 */
-class CuItem {
+class CuItem : public std::enable_shared_from_this<CuItem> {
 public:
   CuItem(const std::string p_id, const int p_item_type);
 
@@ -98,7 +98,7 @@ private:
   glm::mat4 transform;
   btTransform bt_transform;
   CuItemType item_type = NONE;
-  CuItem *parent = nullptr;
+  std::weak_ptr<CuItem> parent;
   std::vector<std::shared_ptr<CuItem>> children;
   btCollisionShape *shape = nullptr;
   btCollisionObject *collision_object = nullptr;

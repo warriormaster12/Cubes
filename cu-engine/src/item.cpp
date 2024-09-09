@@ -64,16 +64,17 @@ void CuItem::set_scale(const glm::vec3 &p_scale) {
 };
 
 void CuItem::add_child(std::shared_ptr<CuItem> p_item) {
-  p_item->parent = this;
+  p_item->parent = shared_from_this();
   children.push_back(p_item);
 }
 
 void CuItem::queue_free() {
   children.clear();
-  if (parent) {
-    for (int i = 0; i < parent->children.size(); ++i) {
-      if (id == parent->children[i]->get_id()) {
-        parent->children.erase(parent->children.begin() + i);
+  if (!parent.expired()) {
+    std::shared_ptr<CuItem> current_parent = parent.lock();
+    for (int i = 0; i < current_parent->children.size(); ++i) {
+      if (id == current_parent->children[i]->get_id()) {
+        current_parent->children.erase(current_parent->children.begin() + i);
         break;
       }
     }
@@ -132,8 +133,8 @@ void CuItem::update() {
                           },
                           {position.x, position.y, position.z, 1.0f}};
 
-    if (parent) {
-      transform = parent->transform * transform;
+    if (!parent.expired()) {
+      transform = parent.lock()->transform * transform;
     }
   }
 
